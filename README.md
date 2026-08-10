@@ -44,6 +44,24 @@ lab network can reach the QR photo-upload page.
 3. `py check_network.py`, then double-click `run.bat` — the app is at
    **http://localhost:8137**.
 
+## Getting G-code in and out (no copy-paste)
+
+The app integrates with Repetrel at the file level (Repetrel has no plugin
+API, and none is needed):
+
+- **In**: the new-print dialog lists recent `.gcode` files straight from
+  `C:\RepetrelProjects` (configurable via `GCODE_DIR` in `.env`) — pick one
+  from the list; plain file upload remains as a fallback.
+- **Out**: when the AI proposes an edit and you click *Save revision*, the
+  file is written **next to the original** as `<name>_rev01.gcode` (and also
+  archived in the print's data folder). In Repetrel it's one File > Open
+  away, in the folder students already use. **The original file is never
+  modified.**
+- The AI knows Hyrel's locked-vs-editable rules: it won't touch the
+  mandatory header lines (reporting/abort/homing), treats machine-specific
+  values (M660, M140) as deliberate hand edits only, and warns when a file
+  edit to M721/M722/M221 would be overridden by the Repetrel head dialogs.
+
 ## Photos: phones, webcams, USB microscope, Canon
 
 - **Phone**: scan the print's QR code; upload straight from the phone camera.

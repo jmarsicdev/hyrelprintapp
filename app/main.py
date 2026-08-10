@@ -12,7 +12,9 @@ from PIL import Image
 import qrcode
 
 from . import ai, db, gcode
-from .config import DATA_DIR, DEFAULT_PRINTER, PORT, PRINTS_DIR, STATIC_DIR
+from pathlib import Path
+
+from .config import DATA_DIR, DEFAULT_PRINTER, GCODE_DIR, PORT, PRINTS_DIR, STATIC_DIR
 
 app = FastAPI(title="Hyrel Print Assistant")
 
@@ -89,9 +91,41 @@ def list_prints():
         return [db.row_to_dict(r) for r in rows]
 
 
+@app.get("/api/gcode-files")
+def list_gcode_files():
+    """List sliced gcode in Repetrel's project folder so students can pick a
+    file directly instead of hunting through an OS file dialog."""
+    if GCODE_DIR is None or not GCODE_DIR.exists():
+        return {"available": False, "root": None, "files": []}
+    found = []
+    for pattern in ("*.gcode", "*.gc", "*.nc"):
+        found.extend(GCODE_DIR.rglob(pattern))
+    found.sort(key=lambda f: f.stat().st_mtime, reverse=True)
+    return {
+        "available": True,
+        "root": str(GCODE_DIR),
+        "files": [
+            {"path": str(f.relative_to(GCODE_DIR)),
+             "mtime": datetime.fromtimestamp(f.stat().st_mtime).isoformat(timespec="minutes"),
+             "size": f.stat().st_size}
+            for f in found[:100]
+        ],
+    }
+
+
+def _resolve_source(source_path: str) -> Path:
+    if GCODE_DIR is None:
+        raise HTTPException(400, "GCODE_DIR is not configured")
+    p = (GCODE_DIR / source_path).resolve()
+    if not p.is_relative_to(GCODE_DIR) or not p.is_file():
+        raise HTTPException(400, "bad source path")
+    return p
+
+
 @app.post("/api/prints")
 async def create_print(
-    gcode_file: UploadFile = File(...),
+    gcode_file: UploadFile | None = File(None),
+    source_path: str = Form(""),
     printer_id: int = Form(...),
     operator: str = Form(""),
     feedstock_batch: str = Form(""),
@@ -99,24 +133,34 @@ async def create_print(
     nozzle_diameter_mm: float | None = Form(None),
     notes: str = Form(""),
 ):
-    raw = await gcode_file.read()
+    src = None
+    if source_path:
+        src = _resolve_source(source_path)
+        raw = src.read_bytes()
+        filename = src.name
+    elif gcode_file is not None and gcode_file.filename:
+        raw = await gcode_file.read()
+        filename = gcode_file.filename
+    else:
+        raise HTTPException(400, "provide a gcode file or a source_path")
+
     text = raw.decode("utf-8", errors="replace")
     sha = hashlib.sha256(raw).hexdigest()
 
     print_id = f"{datetime.now():%Y%m%d}-{secrets.token_hex(3)}"
     d = print_dir(print_id)
-    (d / (gcode_file.filename or "print.gcode")).write_bytes(raw)
+    (d / filename).write_bytes(raw)
 
     params = gcode.analyze(text)
     with db.connect() as conn:
         conn.execute(
             """INSERT INTO prints (id, printer_id, created_at, operator, gcode_filename,
-                   gcode_sha256, params_json, feedstock_batch, solids_loading_pct,
-                   nozzle_diameter_mm, notes)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-            (print_id, printer_id, db.utcnow(), operator, gcode_file.filename, sha,
-             json.dumps(params), feedstock_batch, solids_loading_pct,
-             nozzle_diameter_mm, notes),
+                   gcode_sha256, gcode_source_path, params_json, feedstock_batch,
+                   solids_loading_pct, nozzle_diameter_mm, notes)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            (print_id, printer_id, db.utcnow(), operator, filename, sha,
+             str(src) if src else "", json.dumps(params), feedstock_batch,
+             solids_loading_pct, nozzle_diameter_mm, notes),
         )
     write_meta(print_id)
     return get_print(print_id)
@@ -248,13 +292,26 @@ def download_gcode(print_id: str):
 
 @app.post("/api/prints/{print_id}/revisions")
 def save_revision(print_id: str, content: str = Form(...)):
-    """Save an AI-proposed gcode edit as a numbered revision file."""
-    get_print(print_id)
+    """Save an AI-proposed gcode edit as a numbered revision file — in the
+    print's data folder, and (when the print came from Repetrel's folder)
+    next to the original so it's one File > Open away in Repetrel. The
+    original file is never touched."""
+    p = get_print(print_id)
     d = print_dir(print_id)
     n = 1 + sum(1 for f in d.glob("revision_*.gcode"))
     path = d / f"revision_{n:02d}.gcode"
     path.write_text(content)
-    return {"filename": path.name}
+
+    repetrel_path = None
+    src = p.get("gcode_source_path")
+    if src and GCODE_DIR is not None:
+        sp = Path(src)
+        if sp.is_relative_to(GCODE_DIR) and sp.parent.is_dir():
+            target = sp.parent / f"{sp.stem}_rev{n:02d}.gcode"
+            target.write_text(content)
+            repetrel_path = str(target)
+
+    return {"filename": path.name, "repetrel_path": repetrel_path}
 
 
 # ---------- photos ----------

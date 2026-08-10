@@ -21,6 +21,12 @@ PORT = int(os.environ.get("PORT", "8137"))
 DATA_DIR = Path(os.environ.get("DATA_DIR", ROOT / "data")).resolve()
 DEFAULT_PRINTER = os.environ.get("DEFAULT_PRINTER", "Hyrel")
 
+# Repetrel's project folder — where students' sliced gcode lives. The app
+# lists files from here and writes AI revisions back next to the original.
+_gcode_dir = os.environ.get(
+    "GCODE_DIR", "C:\\RepetrelProjects" if os.name == "nt" else "")
+GCODE_DIR = Path(_gcode_dir).resolve() if _gcode_dir else None
+
 PRINTS_DIR = DATA_DIR / "prints"
 DB_PATH = DATA_DIR / "printlog.sqlite3"
 

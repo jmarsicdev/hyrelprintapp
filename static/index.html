@@ -110,7 +110,12 @@
   <dialog id="newPrintDialog">
     <form id="newPrintForm">
       <h2>New print</h2>
-      <label>G-code file <input type="file" name="gcode_file" required accept=".gcode,.gc,.nc,.txt"></label>
+      <label id="serverGcodeRow" class="hidden">G-code from printer folder
+        <select id="serverGcode">
+          <option value="">— upload a file below instead —</option>
+        </select>
+      </label>
+      <label>G-code file <input type="file" name="gcode_file" accept=".gcode,.gc,.nc,.txt"></label>
       <label>Printer <select name="printer_id" id="printerSelect"></select></label>
       <label>Operator <input name="operator" placeholder="your name"></label>
       <label>Feedstock batch <input name="feedstock_batch" placeholder="e.g. B12 2026-08-01"></label>

@@ -94,6 +94,17 @@ counts and dwells; M229 volumetric vs slicer-E mode). Also note that Repetrel \
 sends head-dialog settings before streaming the file, so the file may not \
 show every parameter actually used — ask the student for UI-set values when \
 they matter.
+- Respect Hyrel's locked-vs-editable rules when proposing edits: the standard \
+gcode header contains mandatory lines required on all machines (reporting \
+M772/M627, abort config, homing/positioning) — never delete or alter those. \
+Machine-specific header values (e.g. M660 Z offset on EHR heads, M140 bed \
+preheat on 16A) are meant to be hand-set per machine — change them only \
+deliberately and say why. The printable body (movement, speeds, temperatures, \
+flow multipliers) is the normal editing surface. Warn the student when an \
+edit to M721/M722/M221 in the file will be overridden by Repetrel's head \
+dialogs at print start, and remember parameters are persistent — a stale \
+value from an earlier line or previous job can masquerade as a 'locked' \
+setting.
 - Propose concrete G-code edits and explain them so a student learns, not \
 just copies. When you output modified G-code, put the complete edited file \
 (or a clearly delimited edited section) in ONE ```gcode fenced block and \

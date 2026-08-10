@@ -4,9 +4,12 @@ past-case retrieval layer without calling the Claude API. Run:
 """
 
 import os
+import pathlib
 
 os.environ.setdefault("ANTHROPIC_API_KEY", "test-not-real")
 os.environ.setdefault("DATA_DIR", "./data-smoketest")
+os.environ.setdefault("GCODE_DIR", "./gcode-smoketest")
+pathlib.Path("./gcode-smoketest/jobs").mkdir(parents=True, exist_ok=True)
 
 from fastapi.testclient import TestClient  # noqa: E402
 
@@ -70,8 +73,29 @@ def main() -> None:
     r = c.get("/api/settings")
     assert r.json()["key_source"] in ("env", "none"), r.json()
 
+    # Repetrel-folder round trip: pick a file from GCODE_DIR, save a
+    # revision, and confirm it lands next to the original (original intact).
+    src = pathlib.Path("./gcode-smoketest/jobs/cup.gcode")
+    src.write_text(GCODE)
+    r = c.get("/api/gcode-files")
+    assert r.json()["available"] and any(
+        f["path"].endswith("cup.gcode") for f in r.json()["files"]), r.json()
+    r = c.post("/api/prints", data={"printer_id": 1,
+                                    "source_path": "jobs/cup.gcode"})
+    assert r.status_code == 200, r.text
+    p3 = r.json()["id"]
+    r = c.post(f"/api/prints/{p3}/revisions", data={"content": "G21\nG1 X5\n"})
+    assert r.status_code == 200, r.text
+    rev = r.json()["repetrel_path"]
+    assert rev and rev.endswith("cup_rev01.gcode"), r.json()
+    assert pathlib.Path(rev).read_text() == "G21\nG1 X5\n"
+    assert src.read_text() == GCODE  # original untouched
+    # Path traversal must be rejected.
+    r = c.post("/api/prints", data={"printer_id": 1, "source_path": "../smoke_test.py"})
+    assert r.status_code == 400, r.text
+
     print("smoke test OK — retrieval, custom fields, photo provenance, "
-          "model picker, and settings endpoints all work:")
+          "model picker, settings, and Repetrel-folder round trip all work:")
     print(ctx[:300])
 
 

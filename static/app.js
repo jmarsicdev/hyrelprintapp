@@ -118,6 +118,16 @@ $('#newPrintBtn').onclick = async () => {
   const printers = await api('/api/printers');
   $('#printerSelect').innerHTML = printers
     .map((p) => `<option value="${p.id}">${p.name}</option>`).join('');
+  try {
+    const g = await api('/api/gcode-files');
+    if (g.available && g.files.length) {
+      $('#serverGcode').innerHTML =
+        '<option value="">— upload a file below instead —</option>' +
+        g.files.map((f) =>
+          `<option value="${f.path}">${f.path} (${f.mtime})</option>`).join('');
+      $('#serverGcodeRow').classList.remove('hidden');
+    }
+  } catch { /* folder not configured — upload only */ }
   $('#newPrintDialog').showModal();
 };
 $('#cancelNew').onclick = () => $('#newPrintDialog').close();
@@ -127,6 +137,14 @@ $('#newPrintForm').onsubmit = async (e) => {
   const fd = new FormData(e.target);
   for (const k of ['solids_loading_pct', 'nozzle_diameter_mm'])
     if (!fd.get(k)) fd.delete(k);
+  const serverPath = $('#serverGcode').value;
+  if (serverPath) {
+    fd.delete('gcode_file');
+    fd.append('source_path', serverPath);
+  } else if (!fd.get('gcode_file')?.name) {
+    alert('Pick a G-code file (from the printer folder or by upload).');
+    return;
+  }
   const p = await api('/api/prints', { method: 'POST', body: fd });
   $('#newPrintDialog').close();
   e.target.reset();
@@ -285,7 +303,9 @@ $('#saveRevision').onclick = async () => {
   const fd = new FormData();
   fd.append('content', match[1]);
   const r = await api(`/api/prints/${currentPrint.id}/revisions`, { method: 'POST', body: fd });
-  alert(`Saved as ${r.filename} in the print folder.`);
+  alert(r.repetrel_path
+    ? `Saved. Open it in Repetrel: ${r.repetrel_path}\n(The original file was not modified.)`
+    : `Saved as ${r.filename} in the print's data folder.`);
 };
 
 // ---------- model picker ----------

@@ -20,6 +20,7 @@ CREATE TABLE IF NOT EXISTS prints (
     operator TEXT DEFAULT '',
     gcode_filename TEXT DEFAULT '',
     gcode_sha256 TEXT DEFAULT '',
+    gcode_source_path TEXT DEFAULT '',
     params_json TEXT DEFAULT '{}',
     feedstock_batch TEXT DEFAULT '',
     solids_loading_pct REAL,
@@ -81,6 +82,7 @@ def init() -> None:
             "ALTER TABLE prints ADD COLUMN tags TEXT DEFAULT ''",
             "ALTER TABLE prints ADD COLUMN custom_json TEXT DEFAULT '{}'",
             "ALTER TABLE photos ADD COLUMN source TEXT DEFAULT ''",
+            "ALTER TABLE prints ADD COLUMN gcode_source_path TEXT DEFAULT ''",
         ):
             try:
                 conn.execute(stmt)
