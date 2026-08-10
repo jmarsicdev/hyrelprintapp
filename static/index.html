@@ -1,0 +1,87 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Hyrel Print Assistant</title>
+<link rel="stylesheet" href="/style.css">
+</head>
+<body>
+<header>
+  <h1>Hyrel Print Assistant</h1>
+  <button id="newPrintBtn">+ New print</button>
+</header>
+
+<main>
+  <section id="printList" class="panel">
+    <h2>Prints</h2>
+    <table id="printsTable">
+      <thead><tr><th>ID</th><th>Date</th><th>Printer</th><th>Operator</th><th>Outcome</th><th>Photos</th></tr></thead>
+      <tbody></tbody>
+    </table>
+  </section>
+
+  <section id="printDetail" class="panel hidden">
+    <button id="backBtn">&larr; All prints</button>
+    <h2 id="detailTitle"></h2>
+    <div class="detail-grid">
+      <div>
+        <h3>Record</h3>
+        <dl id="detailMeta"></dl>
+        <div class="outcome-row">
+          <label>Outcome:</label>
+          <select id="outcomeSelect">
+            <option value="unknown">unknown</option>
+            <option value="success">success</option>
+            <option value="tuning">tuning — printed, refining parameters</option>
+            <option value="partial">partial</option>
+            <option value="failure">failure</option>
+          </select>
+          <input id="outcomeNotes" placeholder="what you observed (layer, symptom, effect)…">
+          <button id="saveOutcome">Save</button>
+        </div>
+        <div id="tagChips" class="tag-chips"></div>
+        <h3>Photos <span class="hint">(scan QR with your phone to add)</span></h3>
+        <img id="qrImg" class="qr" alt="upload QR">
+        <div id="photoStrip"></div>
+        <form id="photoForm">
+          <input type="file" id="photoFile" accept="image/*">
+          <button type="submit">Upload from this PC</button>
+        </form>
+      </div>
+      <div>
+        <h3>AI chat</h3>
+        <div id="chatLog"></div>
+        <form id="chatForm">
+          <textarea id="chatInput" rows="3"
+            placeholder="Describe the failure and ask for help… (gcode + record are attached automatically)"></textarea>
+          <div class="chat-controls">
+            <label><input type="checkbox" id="includePhotos" checked> attach photos</label>
+            <button type="submit" id="chatSend">Send</button>
+          </div>
+        </form>
+        <button id="saveRevision" class="hidden">Save last ```gcode block as revision</button>
+      </div>
+    </div>
+  </section>
+
+  <dialog id="newPrintDialog">
+    <form id="newPrintForm">
+      <h2>New print</h2>
+      <label>G-code file <input type="file" name="gcode_file" required accept=".gcode,.gc,.nc,.txt"></label>
+      <label>Printer <select name="printer_id" id="printerSelect"></select></label>
+      <label>Operator <input name="operator" placeholder="your name"></label>
+      <label>Feedstock batch <input name="feedstock_batch" placeholder="e.g. B12 2026-08-01"></label>
+      <label>Solids loading % <input name="solids_loading_pct" type="number" step="0.1"></label>
+      <label>Nozzle Ø (mm) <input name="nozzle_diameter_mm" type="number" step="0.01"></label>
+      <label>Notes <textarea name="notes" rows="2" placeholder="anything unusual before/at start"></textarea></label>
+      <div class="dialog-buttons">
+        <button type="button" id="cancelNew">Cancel</button>
+        <button type="submit">Create</button>
+      </div>
+    </form>
+  </dialog>
+</main>
+<script src="/app.js"></script>
+</body>
+</html>
