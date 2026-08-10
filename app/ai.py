@@ -1,10 +1,15 @@
 """Claude integration for the print-failure chat."""
 
 import base64
+import os
 
 from anthropic import Anthropic
 
-MODEL = "claude-opus-5"
+from . import config  # noqa: F401 — ensures .env is loaded before we read env vars
+
+# claude-opus-5 gives the best diagnosis quality; claude-sonnet-5 is the
+# cost lever (~40% cheaper, near-Opus on this kind of task). Override in .env.
+MODEL = os.environ.get("CLAUDE_MODEL", "claude-opus-5")
 MAX_TOKENS = 32000
 
 _client: Anthropic | None = None
