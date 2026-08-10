@@ -76,13 +76,19 @@ def chat(
     history: list[dict],
     user_message: str,
     images: list[tuple[bytes, str]] | None = None,
+    lab_context: str = "",
 ) -> str:
-    """Run one chat turn. history = [{role, content}] from the DB (text only)."""
+    """Run one chat turn. history = [{role, content}] from the DB (text only).
+    lab_context carries what the lab has learned so far: curated lessons plus
+    summaries of similar past prints — the app's "learning over time" layer."""
+    ctx = print_context
+    if lab_context:
+        ctx += f"\n\n{lab_context}"
     system = [
         {"type": "text", "text": SYSTEM},
-        # The per-print context (metadata + gcode) is large and stable across
-        # turns — cache it so follow-up questions are cheap.
-        {"type": "text", "text": print_context, "cache_control": {"type": "ephemeral"}},
+        # The per-print context (metadata + gcode + lab history) is large and
+        # stable across turns — cache it so follow-up questions are cheap.
+        {"type": "text", "text": ctx, "cache_control": {"type": "ephemeral"}},
     ]
 
     messages: list[dict] = [

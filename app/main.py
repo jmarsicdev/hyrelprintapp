@@ -12,7 +12,7 @@ from PIL import Image
 import qrcode
 
 from . import ai, db, gcode
-from .config import DEFAULT_PRINTER, PORT, PRINTS_DIR, ROOT
+from .config import DATA_DIR, DEFAULT_PRINTER, PORT, PRINTS_DIR, ROOT
 
 app = FastAPI(title="Hyrel Print Assistant")
 
@@ -231,6 +231,41 @@ def get_photo(print_id: str, filename: str):
 
 # ---------- chat ----------
 
+def build_lab_context(print_id: str, tags: str) -> str:
+    """The 'learning over time' layer: curated lab lessons + similar past
+    cases pulled from the app's own records. The model stays frozen; the
+    context it sees grows with every print the lab logs."""
+    parts = []
+
+    lessons = DATA_DIR / "LESSONS.md"
+    if lessons.exists():
+        parts.append("Curated lab lessons (maintained by the lab):\n"
+                     + lessons.read_text()[:8000])
+
+    with db.connect() as conn:
+        rows = [db.row_to_dict(r) for r in conn.execute(
+            """SELECT * FROM prints
+               WHERE id != ? AND (outcome != 'unknown' OR outcome_notes != '')
+               ORDER BY created_at DESC LIMIT 40""", (print_id,))]
+
+    wanted = set(t for t in tags.split(",") if t)
+    rows.sort(key=lambda p: len(wanted & set((p.get("tags") or "").split(","))),
+              reverse=True)
+    cases = []
+    for p in rows[:5]:
+        flow = (p["params"].get("flow_settings_m221") or [{}])[:1]
+        cases.append(
+            f"- {p['id']} ({p['created_at'][:10]}): outcome={p['outcome']}, "
+            f"tags=[{p.get('tags', '')}], solids%={p['solids_loading_pct']}, "
+            f"feed={p['params'].get('feed_rate_min')}-{p['params'].get('feed_rate_max')}, "
+            f"M221={flow[0] if flow else {}}, notes: {p['outcome_notes'] or p['notes']}")
+    if cases:
+        parts.append("Similar past prints in this lab (use them — cite the "
+                     "print IDs when relevant):\n" + "\n".join(cases))
+
+    return "\n\n".join(parts)
+
+
 @app.post("/api/prints/{print_id}/chat")
 def chat(print_id: str, message: str = Form(...), include_photos: bool = Form(True)):
     p = get_print(print_id)
@@ -256,7 +291,8 @@ def chat(print_id: str, message: str = Form(...), include_photos: bool = Form(Tr
             if path.exists():
                 images.append((path.read_bytes(), "image/jpeg"))
 
-    reply = ai.chat(ctx, history, message, images)
+    lab_ctx = build_lab_context(print_id, p.get("tags", "") or "")
+    reply = ai.chat(ctx, history, message, images, lab_context=lab_ctx)
 
     with db.connect() as conn:
         conn.execute("INSERT INTO chat_messages (print_id, role, content, created_at) "

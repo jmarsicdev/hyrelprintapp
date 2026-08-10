@@ -70,6 +70,25 @@ what lets future CSI scans join back to gcode + process parameters — which
 two of the project's core research directions (G-code-conditioned defect
 detection, solids-loading fingerprinting) depend on.
 
+## How it learns over time
+
+The model itself is frozen (no fine-tuning), but the assistant's knowledge
+grows with the lab's records — which in practice is what "a model that learns"
+looks like at this scale:
+
+- **Similar past cases**: each chat automatically includes summaries of up to
+  5 previous prints with overlapping observation tags (their parameters,
+  outcomes, and notes), so the AI can say "print 20260810-99e262 had the same
+  slumping at 62% solids and slowing the perimeter fixed it."
+- **Curated lessons**: keep a `data/LESSONS.md` file with the lab's distilled
+  rules of thumb (e.g. "below 60% solids our slurry slumps on >30mm walls").
+  If present it is included in every chat. Curate it after interesting
+  sessions — deliberate curation beats automatic accumulation.
+- **The long game**: once hundreds of tagged photos + parameter records
+  accumulate, this dataset can train small dedicated models (photo → defect
+  tag, parameters → outcome) — that's the metrology-lab research track, and
+  this app's records are its training data.
+
 ## Repetrel notes (from Hyrel's wiki — verify on the machine)
 
 - Repetrel installs at `C:\Repetrel`; student work lives in
