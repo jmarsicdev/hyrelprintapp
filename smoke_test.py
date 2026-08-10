@@ -59,7 +59,19 @@ def main() -> None:
     r = c.get(f"/api/prints/{p2}")
     assert r.json()["photos"][0]["source"] == "capture:USB Microscope"
 
-    print("smoke test OK — retrieval, custom fields, and photo provenance all work:")
+    # Model picker + key settings endpoints (no network).
+    r = c.get("/api/models")
+    assert r.json()["current"] == "claude-opus-5", r.json()
+    assert any(m["id"] == "claude-sonnet-5" for m in r.json()["models"])
+    r = c.post("/api/models", data={"model": "claude-sonnet-5"})
+    assert r.status_code == 200
+    assert c.get("/api/models").json()["current"] == "claude-sonnet-5"
+    assert c.post("/api/models", data={"model": "gpt-9"}).status_code == 400
+    r = c.get("/api/settings")
+    assert r.json()["key_source"] in ("env", "none"), r.json()
+
+    print("smoke test OK — retrieval, custom fields, photo provenance, "
+          "model picker, and settings endpoints all work:")
     print(ctx[:300])
 
 

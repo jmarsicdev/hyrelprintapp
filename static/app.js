@@ -1,5 +1,6 @@
 let currentPrint = null;
 let knownTags = [];
+let modelInfo = [];
 
 const $ = (sel) => document.querySelector(sel);
 
@@ -287,4 +288,69 @@ $('#saveRevision').onclick = async () => {
   alert(`Saved as ${r.filename} in the print folder.`);
 };
 
+// ---------- model picker ----------
+
+function showModelHint(id) {
+  const m = modelInfo.find((x) => x.id === id);
+  $('#modelHint').textContent = m ? `${m.price} — ${m.notes}` : '';
+}
+
+async function loadModels() {
+  const r = await api('/api/models');
+  modelInfo = r.models;
+  $('#modelSelect').innerHTML = r.models
+    .map((m) => `<option value="${m.id}">${m.name}</option>`).join('');
+  $('#modelSelect').value = r.current;
+  showModelHint(r.current);
+}
+
+$('#modelSelect').onchange = async (e) => {
+  const fd = new FormData();
+  fd.append('model', e.target.value);
+  await api('/api/models', { method: 'POST', body: fd });
+  showModelHint(e.target.value);
+};
+
+// ---------- API key dialog ----------
+
+async function refreshKeyStatus() {
+  const s = await api('/api/settings');
+  const label = { ui: `using key pasted here (${s.key_hint})`,
+                  env: `using key from .env file (${s.key_hint})`,
+                  none: 'no key configured — chat will not work yet' };
+  $('#keyStatus').textContent = 'Current: ' + label[s.key_source];
+}
+
+$('#keyBtn').onclick = async () => {
+  $('#keyResult').textContent = '';
+  $('#keyInput').value = '';
+  await refreshKeyStatus();
+  $('#keyDialog').showModal();
+};
+
+$('#keySave').onclick = async () => {
+  const key = $('#keyInput').value.trim();
+  if (!key) return;
+  $('#keyResult').textContent = 'Checking key with Anthropic…';
+  try {
+    const fd = new FormData();
+    fd.append('api_key', key);
+    await api('/api/settings/key', { method: 'POST', body: fd });
+    $('#keyResult').textContent = 'Key verified and saved ✓';
+    $('#keyInput').value = '';
+    await refreshKeyStatus();
+  } catch (err) {
+    $('#keyResult').textContent = err.message.replace(/^.*"detail":"|"}$/g, '');
+  }
+};
+
+$('#keyUseEnv').onclick = async () => {
+  await api('/api/settings/key', { method: 'POST', body: new FormData() });
+  $('#keyResult').textContent = 'Reverted to the .env key.';
+  await refreshKeyStatus();
+};
+
+$('#keyClose').onclick = () => $('#keyDialog').close();
+
+loadModels();
 loadPrints();

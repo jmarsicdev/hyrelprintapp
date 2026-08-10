@@ -165,6 +165,51 @@ def list_tags():
     return {"outcomes": OUTCOMES, "tags": OBSERVATION_TAGS}
 
 
+# ---------- settings: model + API key ----------
+
+def _mask_key(key: str) -> str:
+    return key[:11] + "…" + key[-4:] if len(key) > 20 else "…"
+
+
+@app.get("/api/settings")
+def get_settings():
+    import os
+    ui_key = db.get_setting("api_key")
+    env_key = os.environ.get("ANTHROPIC_API_KEY")
+    active = ui_key or env_key
+    return {
+        "key_source": "ui" if ui_key else ("env" if env_key else "none"),
+        "key_hint": _mask_key(active) if active else None,
+    }
+
+
+@app.post("/api/settings/key")
+def set_api_key(api_key: str = Form("")):
+    api_key = api_key.strip()
+    if not api_key:  # clear the UI key, fall back to .env
+        db.delete_setting("api_key")
+        return get_settings()
+    try:
+        ai.verify_key(api_key)
+    except RuntimeError as e:
+        raise HTTPException(400, str(e))
+    db.set_setting("api_key", api_key)
+    return get_settings()
+
+@app.get("/api/models")
+def list_models():
+    return {"models": ai.MODELS,
+            "current": db.get_setting("model", ai.DEFAULT_MODEL)}
+
+
+@app.post("/api/models")
+def set_model(model: str = Form(...)):
+    if model not in ai.MODEL_IDS:
+        raise HTTPException(400, "unknown model")
+    db.set_setting("model", model)
+    return {"current": model}
+
+
 @app.post("/api/prints/{print_id}/notes")
 def set_notes(print_id: str, notes: str = Form("")):
     get_print(print_id)
@@ -313,8 +358,11 @@ def chat(print_id: str, message: str = Form(...), include_photos: bool = Form(Tr
                 images.append((path.read_bytes(), "image/jpeg"))
 
     lab_ctx = build_lab_context(print_id, p.get("tags", "") or "")
+    model = db.get_setting("model", ai.DEFAULT_MODEL)
+    api_key = db.get_setting("api_key")
     try:
-        reply = ai.chat(ctx, history, message, images, lab_context=lab_ctx)
+        reply = ai.chat(ctx, history, message, images, lab_context=lab_ctx,
+                        model=model, api_key=api_key)
     except RuntimeError as e:  # e.g. missing API key — explain, don't 500
         raise HTTPException(503, str(e))
 

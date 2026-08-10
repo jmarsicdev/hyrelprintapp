@@ -9,7 +9,10 @@
 <body>
 <header>
   <h1>Hyrel Print Assistant</h1>
-  <button id="newPrintBtn">+ New print</button>
+  <div>
+    <button id="keyBtn" class="secondary">API key</button>
+    <button id="newPrintBtn">+ New print</button>
+  </div>
 </header>
 
 <main>
@@ -59,6 +62,11 @@
       </div>
       <div>
         <h3>AI chat</h3>
+        <div class="model-row">
+          <label for="modelSelect">Model:</label>
+          <select id="modelSelect"></select>
+        </div>
+        <p id="modelHint" class="hint model-hint"></p>
         <div id="chatLog"></div>
         <form id="chatForm">
           <textarea id="chatInput" rows="3"
@@ -72,6 +80,20 @@
       </div>
     </div>
   </section>
+
+  <dialog id="keyDialog">
+    <h2>Anthropic API key</h2>
+    <p id="keyStatus" class="hint"></p>
+    <input id="keyInput" type="password" placeholder="sk-ant-api03-…" autocomplete="off">
+    <p class="hint">Paste a key from console.anthropic.com to use a different
+      account. The key is checked before saving and stored only on this PC.</p>
+    <div class="dialog-buttons">
+      <button type="button" id="keyUseEnv" class="secondary">Use .env key</button>
+      <button type="button" id="keyClose" class="secondary">Close</button>
+      <button type="button" id="keySave">Verify &amp; save</button>
+    </div>
+    <div id="keyResult" class="hint"></div>
+  </dialog>
 
   <dialog id="captureDialog">
     <h2>Capture from camera</h2>

@@ -48,6 +48,11 @@ CREATE TABLE IF NOT EXISTS chat_messages (
     created_at TEXT NOT NULL
 );
 
+CREATE TABLE IF NOT EXISTS settings (
+    key TEXT PRIMARY KEY,
+    value TEXT NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS specimens (
     id INTEGER PRIMARY KEY,
     print_id TEXT NOT NULL REFERENCES prints(id),
@@ -81,6 +86,24 @@ def init() -> None:
                 conn.execute(stmt)
             except sqlite3.OperationalError:
                 pass  # column already exists
+
+
+def get_setting(key: str, default: str | None = None) -> str | None:
+    with connect() as conn:
+        row = conn.execute("SELECT value FROM settings WHERE key = ?", (key,)).fetchone()
+    return row["value"] if row else default
+
+
+def set_setting(key: str, value: str) -> None:
+    with connect() as conn:
+        conn.execute(
+            "INSERT INTO settings (key, value) VALUES (?, ?) "
+            "ON CONFLICT(key) DO UPDATE SET value = excluded.value", (key, value))
+
+
+def delete_setting(key: str) -> None:
+    with connect() as conn:
+        conn.execute("DELETE FROM settings WHERE key = ?", (key,))
 
 
 def row_to_dict(row: sqlite3.Row | None) -> dict | None:

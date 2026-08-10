@@ -9,5 +9,5 @@ reply = ai.chat(
     history=[],
     user_message="Reply with exactly: OK <model check>",
 )
-print("MODEL:", ai.MODEL)
+print("MODEL:", ai.DEFAULT_MODEL)
 print("REPLY:", reply[:200])

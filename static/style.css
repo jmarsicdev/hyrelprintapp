@@ -20,6 +20,9 @@ button {
 }
 button:disabled { opacity: .5; }
 #backBtn { background: #64748b; margin-bottom: .5rem; }
+button.secondary { background: #64748b; }
+#keyInput { width: 100%; padding: .45rem; border: 1px solid var(--border); border-radius: 6px; }
+#keyResult { min-height: 1.2rem; margin-top: .4rem; }
 
 table { width: 100%; border-collapse: collapse; }
 th, td { text-align: left; padding: .45rem .6rem; border-bottom: 1px solid var(--border); }
@@ -51,6 +54,10 @@ dd { margin: 0; }
 .hint { font-weight: 400; font-size: .8rem; color: #64748b; }
 #photoStrip { display: flex; gap: .5rem; flex-wrap: wrap; margin: .5rem 0; }
 #photoStrip img { height: 90px; border-radius: 6px; border: 1px solid var(--border); }
+
+.model-row { display: flex; gap: .5rem; align-items: center; font-size: .85rem; }
+.model-row select { padding: .3rem; border: 1px solid var(--border); border-radius: 6px; }
+.model-hint { margin: .2rem 0 .5rem; }
 
 #chatLog {
   height: 420px; overflow-y: auto; border: 1px solid var(--border);

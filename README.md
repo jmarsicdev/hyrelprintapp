@@ -69,9 +69,14 @@ any personal/research keys, gives per-workspace usage graphs, and makes the
 key revocable without collateral damage. The key lives only in `.env` on the
 lab PC (never committed — see `.gitignore`).
 
-The chat uses `claude-opus-5` with prompt caching on the per-print gcode
-context (follow-up questions are cheap) and server-side refusal fallbacks
-enabled.
+The chat uses `claude-opus-5` by default, with prompt caching on the
+per-print gcode context (follow-up questions are cheap) and server-side
+refusal fallbacks enabled. Both the **model** (with per-model cost/quality
+notes) and the **API key** can be changed in the UI: the model picker sits
+above the chat, and the **API key** button in the header lets anyone paste a
+key from their own account — it's verified with a free API call before
+saving, stored only in the local database, and "Use .env key" reverts to the
+deployed default.
 
 ## Where the data lives
 

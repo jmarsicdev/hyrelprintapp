@@ -7,26 +7,70 @@ from anthropic import Anthropic
 
 from . import config  # noqa: F401 — ensures .env is loaded before we read env vars
 
-# claude-opus-5 gives the best diagnosis quality; claude-sonnet-5 is the
-# cost lever (~40% cheaper, near-Opus on this kind of task). Override in .env.
-MODEL = os.environ.get("CLAUDE_MODEL", "claude-opus-5")
+# Selectable in the UI (stored in the settings table); CLAUDE_MODEL in .env
+# sets the default. Notes are shown to students next to the picker.
+MODELS = [
+    {
+        "id": "claude-opus-5",
+        "name": "Opus 5 — best quality (default)",
+        "price": "$5 in / $25 out per million tokens",
+        "notes": "Strongest diagnosis and photo understanding. Use for real "
+                 "failures, anything involving photos, or when the cause isn't "
+                 "obvious. With caching, a typical session costs cents.",
+    },
+    {
+        "id": "claude-sonnet-5",
+        "name": "Sonnet 5 — cheaper, near-Opus",
+        "price": "$3 in / $15 out per million tokens",
+        "notes": "About 40% cheaper and close to Opus on most print questions. "
+                 "Good default if budget is tight; step up to Opus when a "
+                 "diagnosis seems off or photos are subtle.",
+    },
+    {
+        "id": "claude-haiku-4-5",
+        "name": "Haiku 4.5 — fastest, weakest",
+        "price": "$1 in / $5 out per million tokens",
+        "notes": "Noticeably weaker reasoning and photo analysis — not "
+                 "recommended for diagnosis. Fine for quick factual questions "
+                 "('what does M722 do?').",
+    },
+]
+MODEL_IDS = {m["id"] for m in MODELS}
+DEFAULT_MODEL = os.environ.get("CLAUDE_MODEL", "claude-opus-5")
 MAX_TOKENS = 32000
 
-_client: Anthropic | None = None
+_clients: dict[str, Anthropic] = {}
 
 
-def get_client() -> Anthropic:
+def get_client(api_key: str | None = None) -> Anthropic:
     """Lazy so the app can start (and the UI can explain what's missing)
-    before an API key is configured."""
-    global _client
-    if _client is None:
-        import os
-        if not os.environ.get("ANTHROPIC_API_KEY"):
-            raise RuntimeError(
-                "No API key configured. Put ANTHROPIC_API_KEY=sk-ant-... in the "
-                ".env file next to the app, then restart it.")
-        _client = Anthropic()
-    return _client
+    before an API key is configured. A UI-provided key overrides .env."""
+    key = api_key or os.environ.get("ANTHROPIC_API_KEY")
+    if not key:
+        raise RuntimeError(
+            "No API key configured. Paste one via the 'API key' button in the "
+            "app header, or put ANTHROPIC_API_KEY=sk-ant-... in the .env file "
+            "next to the app and restart it.")
+    if key not in _clients:
+        _clients[key] = Anthropic(api_key=key)
+    return _clients[key]
+
+
+def verify_key(api_key: str) -> None:
+    """Cheap validity check (token counting is free). Raises RuntimeError
+    with a student-readable message if the key doesn't work."""
+    import anthropic
+    try:
+        Anthropic(api_key=api_key).messages.count_tokens(
+            model=DEFAULT_MODEL, messages=[{"role": "user", "content": "hi"}])
+    except anthropic.AuthenticationError:
+        raise RuntimeError("That key was rejected by Anthropic — check it was "
+                           "copied completely (starts with sk-ant-).")
+    except anthropic.APIConnectionError:
+        raise RuntimeError("Could not reach api.anthropic.com — network problem, "
+                           "not a key problem.")
+    except anthropic.APIStatusError as e:
+        raise RuntimeError(f"Key check failed: {e.message}")
 
 SYSTEM = """\
 You are the print-refinement assistant for a university metrology lab's \
@@ -97,6 +141,8 @@ def chat(
     user_message: str,
     images: list[tuple[bytes, str]] | None = None,
     lab_context: str = "",
+    model: str | None = None,
+    api_key: str | None = None,
 ) -> str:
     """Run one chat turn. history = [{role, content}] from the DB (text only).
     lab_context carries what the lab has learned so far: curated lessons plus
@@ -119,9 +165,9 @@ def chat(
     content.append({"type": "text", "text": user_message})
     messages.append({"role": "user", "content": content})
 
-    client = get_client()
+    client = get_client(api_key)
     kwargs = dict(
-        model=MODEL,
+        model=model or DEFAULT_MODEL,
         max_tokens=MAX_TOKENS,
         system=system,
         messages=messages,
