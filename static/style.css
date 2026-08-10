@@ -64,6 +64,20 @@ dd { margin: 0; }
 .chat-controls { display: flex; justify-content: space-between; align-items: center; margin-top: .3rem; }
 #saveRevision { margin-top: .5rem; background: #15803d; }
 
+.field-row {
+  display: inline-flex; align-items: center; gap: .3rem; margin: .15rem .3rem .15rem 0;
+  background: #eef1f5; border: 1px solid var(--border); border-radius: 6px;
+  padding: .2rem .5rem; font-size: .82rem;
+}
+.field-del { background: none; color: #b91c1c; padding: 0 .2rem; font-size: 1rem; }
+.field-add { display: flex; gap: .4rem; margin: .4rem 0; }
+.field-add input { flex: 1; padding: .35rem; border: 1px solid var(--border); border-radius: 6px; }
+
+#cameraPreview { width: 100%; border-radius: 8px; background: #000; margin: .5rem 0; }
+#captureDialog { width: 34rem; }
+#cameraSelect { width: 100%; padding: .4rem; }
+#captureCaption { width: 100%; padding: .4rem; margin-bottom: .4rem; }
+
 dialog { border: 1px solid var(--border); border-radius: 10px; padding: 1.2rem; width: 26rem; }
 dialog label { display: block; margin: .5rem 0; font-size: .9rem; font-weight: 600; }
 dialog input, dialog select, dialog textarea {

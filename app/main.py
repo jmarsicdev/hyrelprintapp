@@ -12,7 +12,7 @@ from PIL import Image
 import qrcode
 
 from . import ai, db, gcode
-from .config import DATA_DIR, DEFAULT_PRINTER, PORT, PRINTS_DIR, ROOT
+from .config import DATA_DIR, DEFAULT_PRINTER, PORT, PRINTS_DIR, STATIC_DIR
 
 app = FastAPI(title="Hyrel Print Assistant")
 
@@ -50,7 +50,8 @@ def write_meta(print_id: str) -> None:
     p = get_print(print_id)
     with db.connect() as conn:
         photos = [dict(r) for r in conn.execute(
-            "SELECT filename, caption, created_at FROM photos WHERE print_id = ?", (print_id,))]
+            "SELECT filename, caption, source, created_at FROM photos WHERE print_id = ?",
+            (print_id,))]
         printer = conn.execute(
             "SELECT name, make, model FROM printers WHERE id = ?", (p["printer_id"],)).fetchone()
     p["photos"] = photos
@@ -173,6 +174,24 @@ def set_notes(print_id: str, notes: str = Form("")):
     return {"ok": True}
 
 
+@app.post("/api/prints/{print_id}/fields")
+async def set_custom_fields(print_id: str, fields_json: str = Form(...)):
+    """Replace the print's custom key/value fields (free-form dataset columns
+    the lab can add without code changes)."""
+    get_print(print_id)
+    try:
+        fields = json.loads(fields_json)
+        assert isinstance(fields, dict)
+    except (json.JSONDecodeError, AssertionError):
+        raise HTTPException(400, "fields_json must be a JSON object")
+    fields = {str(k)[:80]: str(v)[:2000] for k, v in fields.items() if str(k).strip()}
+    with db.connect() as conn:
+        conn.execute("UPDATE prints SET custom_json = ? WHERE id = ?",
+                     (json.dumps(fields), print_id))
+    write_meta(print_id)
+    return {"custom": fields}
+
+
 @app.get("/api/prints/{print_id}/gcode")
 def download_gcode(print_id: str):
     p = get_print(print_id)
@@ -199,7 +218,8 @@ MAX_PHOTO_EDGE = 2000  # px — plenty for diagnosis, keeps API image tokens san
 
 
 @app.post("/api/prints/{print_id}/photos")
-async def upload_photo(print_id: str, file: UploadFile = File(...), caption: str = Form("")):
+async def upload_photo(print_id: str, file: UploadFile = File(...), caption: str = Form(""),
+                       source: str = Form("upload")):
     get_print(print_id)
     raw = await file.read()
     try:
@@ -215,8 +235,9 @@ async def upload_photo(print_id: str, file: UploadFile = File(...), caption: str
         filename = f"photo_{n + 1:02d}.jpg"
         img.save(print_dir(print_id) / "photos" / filename, "JPEG", quality=90)
         conn.execute(
-            "INSERT INTO photos (print_id, filename, caption, created_at) VALUES (?, ?, ?, ?)",
-            (print_id, filename, caption, db.utcnow()))
+            "INSERT INTO photos (print_id, filename, caption, source, created_at) "
+            "VALUES (?, ?, ?, ?, ?)",
+            (print_id, filename, caption, source[:120], db.utcnow()))
     write_meta(print_id)
     return {"filename": filename}
 
@@ -292,7 +313,10 @@ def chat(print_id: str, message: str = Form(...), include_photos: bool = Form(Tr
                 images.append((path.read_bytes(), "image/jpeg"))
 
     lab_ctx = build_lab_context(print_id, p.get("tags", "") or "")
-    reply = ai.chat(ctx, history, message, images, lab_context=lab_ctx)
+    try:
+        reply = ai.chat(ctx, history, message, images, lab_context=lab_ctx)
+    except RuntimeError as e:  # e.g. missing API key — explain, don't 500
+        raise HTTPException(503, str(e))
 
     with db.connect() as conn:
         conn.execute("INSERT INTO chat_messages (print_id, role, content, created_at) "
@@ -334,7 +358,7 @@ def upload_qr(print_id: str):
 @app.get("/p/{print_id}/upload")
 def phone_upload_page(print_id: str):
     get_print(print_id)
-    return HTMLResponse((ROOT / "static" / "upload.html").read_text())
+    return HTMLResponse((STATIC_DIR / "upload.html").read_text())
 
 
-app.mount("/", StaticFiles(directory=ROOT / "static", html=True), name="static")
+app.mount("/", StaticFiles(directory=STATIC_DIR, html=True), name="static")

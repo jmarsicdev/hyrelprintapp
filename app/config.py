@@ -1,9 +1,19 @@
 import os
+import sys
 from pathlib import Path
 
 from dotenv import load_dotenv
 
-ROOT = Path(__file__).resolve().parent.parent
+# When bundled by PyInstaller, code+static live in the unpacked temp dir
+# (sys._MEIPASS) but data/.env belong next to the .exe itself.
+FROZEN = getattr(sys, "frozen", False)
+if FROZEN:
+    ROOT = Path(sys.executable).resolve().parent
+    STATIC_DIR = Path(sys._MEIPASS) / "static"  # type: ignore[attr-defined]
+else:
+    ROOT = Path(__file__).resolve().parent.parent
+    STATIC_DIR = ROOT / "static"
+
 load_dotenv(ROOT / ".env")
 
 HOST = os.environ.get("HOST", "0.0.0.0")

@@ -7,7 +7,21 @@ from anthropic import Anthropic
 MODEL = "claude-opus-5"
 MAX_TOKENS = 32000
 
-client = Anthropic()  # ANTHROPIC_API_KEY from environment / .env
+_client: Anthropic | None = None
+
+
+def get_client() -> Anthropic:
+    """Lazy so the app can start (and the UI can explain what's missing)
+    before an API key is configured."""
+    global _client
+    if _client is None:
+        import os
+        if not os.environ.get("ANTHROPIC_API_KEY"):
+            raise RuntimeError(
+                "No API key configured. Put ANTHROPIC_API_KEY=sk-ant-... in the "
+                ".env file next to the app, then restart it.")
+        _client = Anthropic()
+    return _client
 
 SYSTEM = """\
 You are the print-refinement assistant for a university metrology lab's \
@@ -55,6 +69,7 @@ def build_print_context(print_row: dict, printer_name: str, gcode_ctx: str) -> s
         "outcome": print_row["outcome"],
         "outcome_notes": print_row["outcome_notes"],
         "student_notes": print_row["notes"],
+        "custom_fields": print_row.get("custom") or {},
         "parsed_gcode": print_row["params"],
     }
     return f"Print record:\n{meta}\n\n{gcode_ctx}"
@@ -99,6 +114,7 @@ def chat(
     content.append({"type": "text", "text": user_message})
     messages.append({"role": "user", "content": content})
 
+    client = get_client()
     kwargs = dict(
         model=MODEL,
         max_tokens=MAX_TOKENS,

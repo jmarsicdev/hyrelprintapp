@@ -40,7 +40,26 @@ def main() -> None:
     ctx = build_lab_context(p2, "over-extrusion")
     assert p1 in ctx and "over-extruded corners" in ctx, ctx
 
-    print("smoke test OK — retrieval context includes prior case:")
+    # Custom fields: free-form dataset columns without code changes.
+    r = c.post(f"/api/prints/{p2}/fields",
+               data={"fields_json": '{"drying time": "24 h", "humidity %": "41"}'})
+    assert r.status_code == 200, r.text
+    r = c.get(f"/api/prints/{p2}")
+    assert r.json()["custom"]["drying time"] == "24 h", r.json()
+
+    # Photo with a source label (camera capture provenance).
+    import io
+    from PIL import Image
+    buf = io.BytesIO()
+    Image.new("RGB", (100, 80), (200, 120, 90)).save(buf, "JPEG")
+    r = c.post(f"/api/prints/{p2}/photos",
+               files={"file": ("capture.jpg", buf.getvalue(), "image/jpeg")},
+               data={"source": "capture:USB Microscope", "caption": "layer 2 corner"})
+    assert r.status_code == 200, r.text
+    r = c.get(f"/api/prints/{p2}")
+    assert r.json()["photos"][0]["source"] == "capture:USB Microscope"
+
+    print("smoke test OK — retrieval, custom fields, and photo provenance all work:")
     print(ctx[:300])
 
 

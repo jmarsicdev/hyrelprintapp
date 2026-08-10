@@ -16,17 +16,45 @@ ceramic paste-extrusion printer. It does two jobs at once:
 No flash drives: students use the printer PC directly, and phones upload
 photos over the lab LAN by scanning a QR code.
 
-## Setup on the Hyrel PC (Windows)
+## Setup on the Hyrel PC — easiest path (single EXE)
 
-1. Install Python 3.12+ from python.org (**check "Add to PATH"**). If the PC
-   is offline, download the full installer elsewhere first. Repetrel is a
-   .NET 4.8 app — Python does not conflict with it.
-2. Copy this folder anywhere (e.g. `C:\hyrel-assistant`).
-3. `py check_network.py` — verifies the lab network allows HTTPS to
-   `api.anthropic.com`. If this fails, talk to IT before going further.
-4. Copy `.env.example` to `.env` and paste in the Anthropic API key.
-5. Double-click `run.bat`. First run installs dependencies; then the app is at
-   **http://localhost:8137** (bookmark it in the browser on that PC).
+The Hyrel PC needs **no Python and no dev tools**:
+
+1. On any Windows machine that *does* have Python (your laptop), run
+   `build_exe.bat` in this folder once. It produces
+   `dist\HyrelAssistant.exe` (self-contained).
+2. Copy `HyrelAssistant.exe` and a filled-in `.env` (copy from
+   `.env.example`, paste the API key) into a folder on the Hyrel PC, e.g.
+   `C:\hyrel-assistant`.
+3. Double-click the exe. A console window stays open (that's the server) and
+   the browser opens to the app. Data is stored in `data\` next to the exe.
+4. If chat fails, check the network first: the app must reach
+   `api.anthropic.com` over HTTPS (run `check_network.py` from source, or
+   just try the chat — a missing key or blocked network produces a clear
+   error message in the chat window).
+
+Windows Firewall will prompt on first run — choose "Allow" so phones on the
+lab network can reach the QR photo-upload page.
+
+## Setup from source (alternative)
+
+1. Install Python 3.12+ from python.org (**check "Add to PATH"**). Repetrel
+   is a .NET 4.8 app — Python does not conflict with it.
+2. Copy this folder anywhere, copy `.env.example` to `.env`, add the API key.
+3. `py check_network.py`, then double-click `run.bat` — the app is at
+   **http://localhost:8137**.
+
+## Photos: phones, webcams, USB microscope, Canon
+
+- **Phone**: scan the print's QR code; upload straight from the phone camera.
+- **USB microscope / any webcam**: click **Capture from camera** on a print —
+  a device picker + live preview appears in the browser (works for any UVC
+  camera, which covers virtually all USB microscopes; no drivers needed).
+- **Canon camera**: two options. Install Canon **EOS Webcam Utility** and the
+  Canon appears in the same Capture picker; or shoot normally and use
+  **Import files** (multi-select) to pull images off the card/USB.
+- Every photo records its **source** (`phone`, `import`,
+  `capture:<device name>`) — imaging modality is part of the dataset.
 
 Phones must be on the same network as the PC for QR photo upload, and Windows
 Firewall must allow inbound connections to Python on port 8137 (Windows will
@@ -59,7 +87,17 @@ data/
 ```
 
 The folder tree (not the sqlite file) is the dataset of record: each print
-folder is self-contained and can be synced to a network share or Drive.
+folder is self-contained and can be synced to a network share or Drive. Set
+`DATA_DIR` in `.env` to store it somewhere else (e.g. a synced/network
+folder) — the app doesn't care where it lives.
+
+**Changing what gets recorded:** every print supports **custom fields**
+(key/value pairs added in the UI — drying time, humidity, kiln schedule,
+anything) with no code changes; they're stored in the DB and `meta.json` and
+shown to the AI. The fixed form fields live in `app/main.py::create_print`,
+the observation-tag vocabulary in `app/main.py::OBSERVATION_TAGS` — both are
+one-place edits. Old records are unaffected by additions (the DB migrates
+itself; meta.json just gains keys).
 `meta.json` includes parsed G-code parameters — for Hyrel that means the
 volumetric-flow settings (`M221` S multiplier / P pulses-per-µL / W / Z),
 prime/unprime (`M722`/`M721`) pulse counts, tools used, feed-rate range,

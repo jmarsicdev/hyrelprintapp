@@ -45,9 +45,17 @@
         <img id="qrImg" class="qr" alt="upload QR">
         <div id="photoStrip"></div>
         <form id="photoForm">
-          <input type="file" id="photoFile" accept="image/*">
-          <button type="submit">Upload from this PC</button>
+          <input type="file" id="photoFile" accept="image/*" multiple>
+          <button type="submit">Import files</button>
+          <button type="button" id="captureBtn">Capture from camera</button>
         </form>
+        <h3>Custom fields <span class="hint">(record anything — saved into meta.json)</span></h3>
+        <div id="customFields"></div>
+        <div class="field-add">
+          <input id="newFieldKey" placeholder="field (e.g. drying time)">
+          <input id="newFieldVal" placeholder="value (e.g. 24 h)">
+          <button type="button" id="addField">Add</button>
+        </div>
       </div>
       <div>
         <h3>AI chat</h3>
@@ -64,6 +72,18 @@
       </div>
     </div>
   </section>
+
+  <dialog id="captureDialog">
+    <h2>Capture from camera</h2>
+    <select id="cameraSelect"></select>
+    <video id="cameraPreview" autoplay playsinline muted></video>
+    <input id="captureCaption" placeholder="caption (what/where)">
+    <div class="dialog-buttons">
+      <button type="button" id="closeCapture">Close</button>
+      <button type="button" id="snapBtn">Capture photo</button>
+    </div>
+    <div id="captureStatus" class="hint"></div>
+  </dialog>
 
   <dialog id="newPrintDialog">
     <form id="newPrintForm">

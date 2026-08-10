@@ -51,7 +51,32 @@ async function openPrint(id) {
   renderTags(p.tags || '');
   $('#qrImg').src = `/api/prints/${p.id}/qr?t=${Date.now()}`;
   renderPhotos(p.photos);
+  renderCustomFields(p.custom || {});
   renderChat(p.chat);
+}
+
+function renderCustomFields(custom) {
+  const box = $('#customFields');
+  box.innerHTML = '';
+  for (const [k, v] of Object.entries(custom)) {
+    const row = document.createElement('div');
+    row.className = 'field-row';
+    row.dataset.key = k;
+    row.dataset.val = v;
+    row.innerHTML = `<b>${k}</b>: ${v} <button type="button" class="field-del">×</button>`;
+    row.querySelector('.field-del').onclick = () => { row.remove(); saveCustomFields(); };
+    box.appendChild(row);
+  }
+}
+
+async function saveCustomFields() {
+  const fields = {};
+  for (const row of document.querySelectorAll('.field-row'))
+    fields[row.dataset.key] = row.dataset.val;
+  const fd = new FormData();
+  fd.append('fields_json', JSON.stringify(fields));
+  const r = await api(`/api/prints/${currentPrint.id}/fields`, { method: 'POST', body: fd });
+  renderCustomFields(r.custom);
 }
 
 function renderPhotos(photos) {
@@ -60,7 +85,7 @@ function renderPhotos(photos) {
   for (const ph of photos) {
     const img = document.createElement('img');
     img.src = `/api/prints/${currentPrint.id}/photos/${ph.filename}`;
-    img.title = ph.caption;
+    img.title = [ph.source, ph.caption].filter(Boolean).join(' — ');
     strip.appendChild(img);
   }
 }
@@ -135,12 +160,85 @@ $('#saveOutcome').onclick = async () => {
 
 $('#photoForm').onsubmit = async (e) => {
   e.preventDefault();
-  const file = $('#photoFile').files[0];
-  if (!file) return;
-  const fd = new FormData();
-  fd.append('file', file);
-  await api(`/api/prints/${currentPrint.id}/photos`, { method: 'POST', body: fd });
+  const files = $('#photoFile').files;
+  if (!files.length) return;
+  for (const file of files) {
+    const fd = new FormData();
+    fd.append('file', file);
+    fd.append('source', 'import');
+    await api(`/api/prints/${currentPrint.id}/photos`, { method: 'POST', body: fd });
+  }
   openPrint(currentPrint.id);
+};
+
+$('#addField').onclick = async () => {
+  const k = $('#newFieldKey').value.trim();
+  const v = $('#newFieldVal').value.trim();
+  if (!k) return;
+  const box = $('#customFields');
+  const row = document.createElement('div');
+  row.className = 'field-row';
+  row.dataset.key = k;
+  row.dataset.val = v;
+  box.appendChild(row);
+  $('#newFieldKey').value = '';
+  $('#newFieldVal').value = '';
+  await saveCustomFields();
+};
+
+// ---------- camera capture (webcam / USB microscope / Canon-as-webcam) ----------
+
+let cameraStream = null;
+
+async function startCamera(deviceId) {
+  if (cameraStream) cameraStream.getTracks().forEach((t) => t.stop());
+  cameraStream = await navigator.mediaDevices.getUserMedia({
+    video: deviceId ? { deviceId: { exact: deviceId }, width: { ideal: 1920 } }
+                    : { width: { ideal: 1920 } },
+  });
+  $('#cameraPreview').srcObject = cameraStream;
+}
+
+$('#captureBtn').onclick = async () => {
+  $('#captureStatus').textContent = '';
+  $('#captureDialog').showModal();
+  try {
+    await startCamera(null); // permission prompt first, so labels are visible
+    const devices = (await navigator.mediaDevices.enumerateDevices())
+      .filter((d) => d.kind === 'videoinput');
+    $('#cameraSelect').innerHTML = devices
+      .map((d) => `<option value="${d.deviceId}">${d.label || 'camera'}</option>`).join('');
+  } catch (err) {
+    $('#captureStatus').textContent =
+      'No camera access: ' + err.message + ' (is the device plugged in?)';
+  }
+};
+
+$('#cameraSelect').onchange = (e) => startCamera(e.target.value);
+
+$('#snapBtn').onclick = async () => {
+  const video = $('#cameraPreview');
+  if (!video.videoWidth) return;
+  const canvas = document.createElement('canvas');
+  canvas.width = video.videoWidth;
+  canvas.height = video.videoHeight;
+  canvas.getContext('2d').drawImage(video, 0, 0);
+  const blob = await new Promise((res) => canvas.toBlob(res, 'image/jpeg', 0.92));
+  const deviceLabel = $('#cameraSelect').selectedOptions[0]?.textContent || 'camera';
+  const fd = new FormData();
+  fd.append('file', blob, 'capture.jpg');
+  fd.append('caption', $('#captureCaption').value);
+  fd.append('source', `capture:${deviceLabel}`);
+  await api(`/api/prints/${currentPrint.id}/photos`, { method: 'POST', body: fd });
+  $('#captureStatus').textContent = 'Captured ✓ (keep capturing or close)';
+  const p = await api(`/api/prints/${currentPrint.id}`);
+  renderPhotos(p.photos);
+};
+
+$('#closeCapture').onclick = () => {
+  if (cameraStream) cameraStream.getTracks().forEach((t) => t.stop());
+  cameraStream = null;
+  $('#captureDialog').close();
 };
 
 $('#chatForm').onsubmit = async (e) => {

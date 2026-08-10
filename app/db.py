@@ -27,7 +27,8 @@ CREATE TABLE IF NOT EXISTS prints (
     notes TEXT DEFAULT '',
     outcome TEXT DEFAULT 'unknown',
     outcome_notes TEXT DEFAULT '',
-    tags TEXT DEFAULT ''
+    tags TEXT DEFAULT '',
+    custom_json TEXT DEFAULT '{}'
 );
 
 CREATE TABLE IF NOT EXISTS photos (
@@ -35,6 +36,7 @@ CREATE TABLE IF NOT EXISTS photos (
     print_id TEXT NOT NULL REFERENCES prints(id),
     filename TEXT NOT NULL,
     caption TEXT DEFAULT '',
+    source TEXT DEFAULT '',
     created_at TEXT NOT NULL
 );
 
@@ -69,6 +71,16 @@ def connect() -> sqlite3.Connection:
 def init() -> None:
     with connect() as conn:
         conn.executescript(SCHEMA)
+        # Lightweight migrations for databases created by older versions.
+        for stmt in (
+            "ALTER TABLE prints ADD COLUMN tags TEXT DEFAULT ''",
+            "ALTER TABLE prints ADD COLUMN custom_json TEXT DEFAULT '{}'",
+            "ALTER TABLE photos ADD COLUMN source TEXT DEFAULT ''",
+        ):
+            try:
+                conn.execute(stmt)
+            except sqlite3.OperationalError:
+                pass  # column already exists
 
 
 def row_to_dict(row: sqlite3.Row | None) -> dict | None:
@@ -77,4 +89,6 @@ def row_to_dict(row: sqlite3.Row | None) -> dict | None:
     d = dict(row)
     if "params_json" in d:
         d["params"] = json.loads(d.pop("params_json") or "{}")
+    if "custom_json" in d:
+        d["custom"] = json.loads(d.pop("custom_json") or "{}")
     return d
