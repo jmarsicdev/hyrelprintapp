@@ -3,6 +3,7 @@
 import base64
 import os
 
+import anthropic
 from anthropic import Anthropic
 
 from . import config  # noqa: F401 — ensures .env is loaded before we read env vars
@@ -56,21 +57,40 @@ def get_client(api_key: str | None = None) -> Anthropic:
     return _clients[key]
 
 
+def explain(e: Exception) -> RuntimeError:
+    """Turn an SDK exception into something a student can act on. Callers turn
+    these into a 503 whose text is shown directly in the chat window — without
+    this, a mistyped key or a blocked lab network surfaces as a bare 500."""
+    if isinstance(e, anthropic.AuthenticationError):
+        return RuntimeError(
+            "Anthropic rejected the API key — check it was copied completely "
+            "(starts with sk-ant-), or paste a working one with the 'API key' "
+            "button in the header.")
+    if isinstance(e, anthropic.PermissionDeniedError):
+        return RuntimeError(
+            "This API key is not allowed to use the selected model. Pick "
+            "another model above, or use a key whose workspace has access.")
+    if isinstance(e, anthropic.APIConnectionError):
+        return RuntimeError(
+            "Could not reach api.anthropic.com — a network problem, not a key "
+            "problem. The lab network must allow HTTPS to that host "
+            "(run check_network.py to confirm).")
+    if isinstance(e, anthropic.RateLimitError):
+        return RuntimeError(
+            "Anthropic is rate-limiting this key — wait a moment and send again.")
+    if isinstance(e, anthropic.APIStatusError):
+        return RuntimeError(f"Anthropic returned an error ({e.status_code}): {e.message}")
+    return RuntimeError(f"Chat failed: {e}")
+
+
 def verify_key(api_key: str) -> None:
     """Cheap validity check (token counting is free). Raises RuntimeError
     with a student-readable message if the key doesn't work."""
-    import anthropic
     try:
         Anthropic(api_key=api_key).messages.count_tokens(
             model=DEFAULT_MODEL, messages=[{"role": "user", "content": "hi"}])
-    except anthropic.AuthenticationError:
-        raise RuntimeError("That key was rejected by Anthropic — check it was "
-                           "copied completely (starts with sk-ant-).")
-    except anthropic.APIConnectionError:
-        raise RuntimeError("Could not reach api.anthropic.com — network problem, "
-                           "not a key problem.")
-    except anthropic.APIStatusError as e:
-        raise RuntimeError(f"Key check failed: {e.message}")
+    except anthropic.APIError as e:
+        raise explain(e) from e
 
 SYSTEM = """\
 You are the print-refinement assistant for a university metrology lab's \
@@ -193,8 +213,12 @@ def chat(
         # Older SDK without the fallbacks parameter — run without it.
         stream_ctx = client.messages.stream(**kwargs)
 
-    with stream_ctx as stream:
-        msg = stream.get_final_message()
+    # The request is issued on __enter__, so API errors surface here.
+    try:
+        with stream_ctx as stream:
+            msg = stream.get_final_message()
+    except anthropic.APIError as e:
+        raise explain(e) from e
 
     if msg.stop_reason == "refusal":
         return (

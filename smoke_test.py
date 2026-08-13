@@ -94,8 +94,35 @@ def main() -> None:
     r = c.post("/api/prints", data={"printer_id": 1, "source_path": "../smoke_test.py"})
     assert r.status_code == 400, r.text
 
+    # API failures must reach the chat window as readable text, not a bare 500.
+    # The SDK raises AuthenticationError/APIConnectionError, which are not
+    # RuntimeError — before app.ai.explain() existed these escaped as a 500.
+    import httpx
+    import anthropic
+    from app import ai
+    req = httpx.Request("POST", "https://api.anthropic.com/v1/messages")
+    bad_key = anthropic.AuthenticationError(
+        "bad key", response=httpx.Response(401, request=req), body=None)
+    for err, expected in ((bad_key, "sk-ant-"),
+                          (anthropic.APIConnectionError(request=req), "network problem")):
+        translated = ai.explain(err)
+        assert isinstance(translated, RuntimeError), translated
+        assert expected in str(translated), translated
+
+    def _refuse_key(*args, **kwargs):
+        raise ai.explain(bad_key)
+
+    original, ai.chat = ai.chat, _refuse_key
+    try:
+        r = c.post(f"/api/prints/{p1}/chat", data={"message": "why did it slump?"})
+    finally:
+        ai.chat = original
+    assert r.status_code == 503, r.status_code
+    assert "sk-ant-" in r.json()["detail"], r.text
+
     print("smoke test OK — retrieval, custom fields, photo provenance, "
-          "model picker, settings, and Repetrel-folder round trip all work:")
+          "model picker, settings, Repetrel-folder round trip, and readable "
+          "API-error handling all work:")
     print(ctx[:300])
 
 
