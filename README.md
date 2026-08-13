@@ -176,6 +176,32 @@ looks like at this scale:
 - Machines ship with an always-admin Windows user named `Hyrel` and require
   English system locale — don't change either.
 
+## Open: verify on the printer PC
+
+Nothing below is known-broken — none of it can be settled off the machine.
+
+1. **Revisions only reach the Repetrel folder for folder-sourced prints.**
+   `save_revision` writes `<name>_revNN.gcode` next to the original only when
+   the record carries a `gcode_source_path` inside `GCODE_DIR`. Create the
+   print with the **G-code from printer folder** dropdown and it round-trips;
+   create it with the **G-code file** upload box and `repetrel_path` comes
+   back `null`, so the revision exists only in `data/prints/<id>/` and has to
+   be fetched by hand. Both inputs sit in the same dialog and look equally
+   valid, which is the trap — confirmed by test, not yet seen on real
+   Repetrel data. Worth deciding whether upload should be de-emphasised, or
+   whether an uploaded file should be copied into `GCODE_DIR` so revisions
+   land somewhere useful either way. The post-save alert does distinguish the
+   two cases, but only after the write.
+2. **Is `C:\RepetrelProjects` the real path, and is it writable** by the
+   account running the app? The `Hyrel` user is always-admin, so this is
+   expected to be fine — just unconfirmed.
+3. **Does the file list stay usable** against a real project tree? The picker
+   walks `GCODE_DIR` recursively on every call and shows the 100 most recent
+   `.gcode`/`.gc`/`.nc` files; that has only been tested on a toy folder.
+4. **Do real Repetrel files parse as expected** — `app/gcode.py` was written
+   against the wiki and a hand-made sample, so check `meta.json` on a first
+   real print for sane M221/M721/M722 values and layer count.
+
 ## Development
 
 ```
