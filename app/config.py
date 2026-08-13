@@ -16,7 +16,11 @@ else:
 
 load_dotenv(ROOT / ".env")
 
-HOST = os.environ.get("HOST", "0.0.0.0")
+# Localhost only: no endpoint is authenticated, so anyone who could reach this
+# port could read every print, rewrite gcode in the Repetrel folder, or spend
+# the lab's API credits. Nothing needs LAN access now that photos come from
+# cameras attached to this PC. Overriding this exposes the whole API.
+HOST = os.environ.get("HOST", "127.0.0.1")
 PORT = int(os.environ.get("PORT", "8137"))
 DATA_DIR = Path(os.environ.get("DATA_DIR", ROOT / "data")).resolve()
 DEFAULT_PRINTER = os.environ.get("DEFAULT_PRINTER", "Hyrel")

@@ -2,19 +2,17 @@ import hashlib
 import io
 import json
 import secrets
-import socket
 from datetime import datetime
 
 from fastapi import FastAPI, File, Form, HTTPException, UploadFile
-from fastapi.responses import FileResponse, HTMLResponse, Response
+from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from PIL import Image
-import qrcode
 
 from . import ai, db, gcode
 from pathlib import Path
 
-from .config import DATA_DIR, DEFAULT_PRINTER, GCODE_DIR, PORT, PRINTS_DIR, STATIC_DIR
+from .config import DATA_DIR, DEFAULT_PRINTER, GCODE_DIR, PRINTS_DIR, STATIC_DIR
 
 app = FastAPI(title="Hyrel Print Assistant")
 
@@ -437,33 +435,10 @@ def chat(print_id: str, message: str = Form(...), include_photos: bool = Form(Tr
     return {"reply": reply}
 
 
-# ---------- phone upload page + QR ----------
-
-def lan_ip() -> str:
-    s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-    try:
-        s.connect(("8.8.8.8", 80))
-        return s.getsockname()[0]
-    except OSError:
-        return "127.0.0.1"
-    finally:
-        s.close()
-
-
-@app.get("/api/prints/{print_id}/qr")
-def upload_qr(print_id: str):
-    get_print(print_id)
-    url = f"http://{lan_ip()}:{PORT}/p/{print_id}/upload"
-    buf = io.BytesIO()
-    qrcode.make(url).save(buf, format="PNG")
-    return Response(buf.getvalue(), media_type="image/png",
-                    headers={"X-Upload-Url": url})
-
-
-@app.get("/p/{print_id}/upload")
-def phone_upload_page(print_id: str):
-    get_print(print_id)
-    return HTMLResponse((STATIC_DIR / "upload.html").read_text())
-
+# Photos come from the PC itself: "Capture from camera" (any UVC webcam or USB
+# microscope, and a Canon via EOS Webcam Utility) or "Import files" off the
+# card. There is deliberately no phone-upload path — it was the only reason to
+# listen on the LAN, and nothing here is authenticated, so the app now binds to
+# localhost only (see HOST in config.py).
 
 app.mount("/", StaticFiles(directory=STATIC_DIR, html=True), name="static")

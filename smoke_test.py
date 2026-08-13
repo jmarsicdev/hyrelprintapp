@@ -102,6 +102,13 @@ def main() -> None:
     r = c.post("/api/prints", data={"printer_id": 1, "source_path": "../smoke_test.py"})
     assert r.status_code == 400, r.text
 
+    # The phone-upload path is gone on purpose: it was the only reason to bind
+    # to the LAN, and nothing here is authenticated. Keep it gone.
+    assert c.get(f"/api/prints/{p1}/qr").status_code == 404
+    assert c.get(f"/p/{p1}/upload").status_code == 404
+    from app import config as _config
+    assert not _config.HOST.startswith("0.0.0.0"), _config.HOST
+
     # API failures must reach the chat window as readable text, not a bare 500.
     # The SDK raises AuthenticationError/APIConnectionError, which are not
     # RuntimeError — before app.ai.explain() existed these escaped as a 500.

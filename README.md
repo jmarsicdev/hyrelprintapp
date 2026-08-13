@@ -13,8 +13,13 @@ ceramic paste-extrusion printer. It does two jobs at once:
    full chat transcript. Specimens labeled with the print ID can later be
    joined to CSI scans — the provenance layer for the metrology lab's ML work.
 
-No flash drives: students use the printer PC directly, and phones upload
-photos over the lab LAN by scanning a QR code.
+No flash drives: students work on the printer PC directly, and photos come
+from a camera attached to that PC.
+
+The app listens on **localhost only** and has no login. That is deliberate:
+every endpoint is unauthenticated, so exposing the port would let anyone on
+the lab network read every print, write gcode into `C:\RepetrelProjects`, or
+spend the lab's API credits. Don't change `HOST` in `.env`.
 
 ## Setup on the Hyrel PC — easiest path (single EXE)
 
@@ -33,8 +38,8 @@ The Hyrel PC needs **no Python and no dev tools**:
    just try the chat — a missing key or blocked network produces a clear
    error message in the chat window).
 
-Windows Firewall will prompt on first run — choose "Allow" so phones on the
-lab network can reach the QR photo-upload page.
+Windows Firewall should not prompt at all — the app binds to localhost. If it
+does prompt, "Cancel" is the safe answer; the app still works.
 
 ## Setup from source (alternative)
 
@@ -62,21 +67,24 @@ API, and none is needed):
   values (M660, M140) as deliberate hand edits only, and warns when a file
   edit to M721/M722/M221 would be overridden by the Repetrel head dialogs.
 
-## Photos: phones, webcams, USB microscope, Canon
+## Photos: webcams, USB microscope, Canon
 
-- **Phone**: scan the print's QR code; upload straight from the phone camera.
 - **USB microscope / any webcam**: click **Capture from camera** on a print —
   a device picker + live preview appears in the browser (works for any UVC
   camera, which covers virtually all USB microscopes; no drivers needed).
 - **Canon camera**: two options. Install Canon **EOS Webcam Utility** and the
   Canon appears in the same Capture picker; or shoot normally and use
   **Import files** (multi-select) to pull images off the card/USB.
-- Every photo records its **source** (`phone`, `import`,
-  `capture:<device name>`) — imaging modality is part of the dataset.
+- Every photo records its **source** (`import`, `capture:<device name>`) —
+  imaging modality is part of the dataset.
 
-Phones must be on the same network as the PC for QR photo upload, and Windows
-Firewall must allow inbound connections to Python on port 8137 (Windows will
-prompt on first run — choose "Allow").
+Reach the app as **http://localhost:8137**, not by IP address. Browsers only
+grant camera access to `localhost` (or HTTPS), so **Capture from camera** is
+silently unavailable over any other address.
+
+There is no phone-upload path. Adding one back means exposing an
+unauthenticated API to the lab network, so it would need real authentication
+first — see the note at the top.
 
 ### API key recommendation
 

@@ -50,7 +50,6 @@ async function openPrint(id) {
   $('#outcomeSelect').value = p.outcome;
   $('#outcomeNotes').value = p.outcome_notes;
   renderTags(p.tags || '');
-  $('#qrImg').src = `/api/prints/${p.id}/qr?t=${Date.now()}`;
   renderPhotos(p.photos);
   renderCustomFields(p.custom || {});
   renderChat(p.chat);
