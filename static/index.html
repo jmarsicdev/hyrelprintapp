@@ -75,7 +75,8 @@
             <button type="submit" id="chatSend">Send</button>
           </div>
         </form>
-        <button id="saveRevision" class="hidden">Save last ```gcode block as revision</button>
+        <p class="hint">When the AI proposes G-code, a review button appears on
+          that message — nothing is written until you approve it.</p>
       </div>
     </div>
   </section>
@@ -92,6 +93,22 @@
       <button type="button" id="keySave">Verify &amp; save</button>
     </div>
     <div id="keyResult" class="hint"></div>
+  </dialog>
+
+  <dialog id="revisionDialog" class="wide">
+    <h2>Review revision before saving</h2>
+    <p id="revDest" class="hint"></p>
+    <p id="revFragment" class="warn hidden"></p>
+    <div class="rev-toolbar">
+      <span id="revSummary" class="hint"></span>
+      <button type="button" id="revToggle" class="secondary">View whole file</button>
+    </div>
+    <pre id="revDiff" class="codeview"></pre>
+    <div class="dialog-buttons">
+      <button type="button" id="revCancel" class="secondary">Cancel</button>
+      <button type="button" id="revSave">Save as revision</button>
+    </div>
+    <div id="revStatus" class="hint"></div>
   </dialog>
 
   <dialog id="captureDialog">

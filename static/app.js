@@ -90,19 +90,39 @@ function renderPhotos(photos) {
   }
 }
 
+function gcodeBlocks(text) {
+  const blocks = [];
+  const re = /```gcode\r?\n([\s\S]*?)```/g;
+  let m;
+  while ((m = re.exec(text)) !== null) blocks.push(m[1]);
+  return blocks;
+}
+
 function renderChat(messages) {
   const log = $('#chatLog');
   log.innerHTML = '';
   for (const m of messages) {
     const div = document.createElement('div');
     div.className = `msg ${m.role}`;
-    div.textContent = m.content;
+    const body = document.createElement('span');
+    body.textContent = m.content;
+    div.appendChild(body);
+    // A review button per proposed block, attached to the message it came
+    // from — so what you approve is always the block you are looking at.
+    if (m.role === 'assistant') {
+      gcodeBlocks(m.content).forEach((code, i, all) => {
+        const btn = document.createElement('button');
+        btn.className = 'review-rev';
+        btn.textContent = all.length > 1
+          ? `Review G-code block ${i + 1} of ${all.length}…`
+          : 'Review this G-code…';
+        btn.onclick = () => openRevisionReview(code);
+        div.appendChild(btn);
+      });
+    }
     log.appendChild(div);
   }
   log.scrollTop = log.scrollHeight;
-  const hasGcodeBlock = messages.some(
-    (m) => m.role === 'assistant' && m.content.includes('```gcode'));
-  $('#saveRevision').classList.toggle('hidden', !hasGcodeBlock);
 }
 
 // ---------- events ----------
@@ -292,19 +312,254 @@ $('#chatForm').onsubmit = async (e) => {
   }
 };
 
-$('#saveRevision').onclick = async () => {
-  const p = await api(`/api/prints/${currentPrint.id}`);
-  const lastWithBlock = [...p.chat].reverse()
-    .find((m) => m.role === 'assistant' && m.content.includes('```gcode'));
-  if (!lastWithBlock) return;
-  const match = lastWithBlock.content.match(/```gcode\n([\s\S]*?)```/);
-  if (!match) return;
+// ---------- revision review ----------
+
+let pendingRevision = null;
+let pendingOriginal = '';
+let showWholeFile = false;
+
+const DIFF_CONTEXT = 3;
+// Cap on the LCS table we are willing to fill. Common prefix/suffix are
+// stripped first, so a typical "changed a few header values" edit stays far
+// under this even on a very large file.
+const DIFF_CELL_BUDGET = 400000;
+
+function lcsOps(a, b) {
+  const n = a.length, m = b.length, w = m + 1;
+  const dp = new Uint32Array((n + 1) * w);
+  for (let i = n - 1; i >= 0; i--) {
+    for (let j = m - 1; j >= 0; j--) {
+      dp[i * w + j] = a[i] === b[j]
+        ? dp[(i + 1) * w + (j + 1)] + 1
+        : Math.max(dp[(i + 1) * w + j], dp[i * w + (j + 1)]);
+    }
+  }
+  const ops = [];
+  let i = 0, j = 0;
+  while (i < n && j < m) {
+    if (a[i] === b[j]) { ops.push([' ', a[i]]); i++; j++; }
+    else if (dp[(i + 1) * w + j] >= dp[i * w + (j + 1)]) { ops.push(['-', a[i]]); i++; }
+    else { ops.push(['+', b[j]]); j++; }
+  }
+  while (i < n) ops.push(['-', a[i++]]);
+  while (j < m) ops.push(['+', b[j++]]);
+  return ops;
+}
+
+// Longest increasing subsequence over the second element, so anchor pairs are
+// used in a consistent order rather than crossing over each other.
+function lisBySecond(pairs) {
+  if (!pairs.length) return [];
+  const tails = [], tailIdx = [], prev = new Array(pairs.length).fill(-1);
+  for (let k = 0; k < pairs.length; k++) {
+    const j = pairs[k][1];
+    let lo = 0, hi = tails.length;
+    while (lo < hi) {
+      const mid = (lo + hi) >> 1;
+      if (tails[mid] < j) lo = mid + 1; else hi = mid;
+    }
+    tails[lo] = j;
+    tailIdx[lo] = k;
+    prev[k] = lo > 0 ? tailIdx[lo - 1] : -1;
+  }
+  const out = [];
+  for (let k = tailIdx[tails.length - 1]; k !== -1; k = prev[k]) out.push(pairs[k]);
+  return out.reverse();
+}
+
+// Lines occurring exactly once on both sides within the range: reliable
+// alignment points. G-code is full of them (coordinates make most moves
+// unique), which is what keeps big files tractable.
+function anchorPairs(a, b, lo1, hi1, lo2, hi2) {
+  const ca = new Map(), cb = new Map();
+  for (let i = lo1; i < hi1; i++) ca.set(a[i], (ca.get(a[i]) || 0) + 1);
+  for (let j = lo2; j < hi2; j++) cb.set(b[j], (cb.get(b[j]) || 0) + 1);
+  const posB = new Map();
+  for (let j = lo2; j < hi2; j++) if (cb.get(b[j]) === 1) posB.set(b[j], j);
+  const pairs = [];
+  for (let i = lo1; i < hi1; i++) {
+    if (ca.get(a[i]) === 1 && posB.has(a[i])) pairs.push([i, posB.get(a[i])]);
+  }
+  return lisBySecond(pairs);
+}
+
+function diffRange(a, b, lo1, hi1, lo2, hi2, out, state) {
+  while (lo1 < hi1 && lo2 < hi2 && a[lo1] === b[lo2]) { out.push([' ', a[lo1]]); lo1++; lo2++; }
+  const tail = [];
+  while (hi1 > lo1 && hi2 > lo2 && a[hi1 - 1] === b[hi2 - 1]) {
+    tail.push([' ', a[hi1 - 1]]); hi1--; hi2--;
+  }
+  tail.reverse();
+
+  const n = hi1 - lo1, m = hi2 - lo2;
+  if (n === 0 || m === 0) {
+    for (let i = lo1; i < hi1; i++) out.push(['-', a[i]]);
+    for (let j = lo2; j < hi2; j++) out.push(['+', b[j]]);
+  } else if (n * m <= DIFF_CELL_BUDGET) {
+    for (const op of lcsOps(a.slice(lo1, hi1), b.slice(lo2, hi2))) out.push(op);
+  } else {
+    const anchors = anchorPairs(a, b, lo1, hi1, lo2, hi2);
+    if (!anchors.length) {
+      // Nothing shared to align on — report it as a wholesale replacement.
+      state.coarse = true;
+      for (let i = lo1; i < hi1; i++) out.push(['-', a[i]]);
+      for (let j = lo2; j < hi2; j++) out.push(['+', b[j]]);
+    } else {
+      let p1 = lo1, p2 = lo2;
+      for (const [i, j] of anchors) {
+        diffRange(a, b, p1, i, p2, j, out, state);
+        out.push([' ', a[i]]);
+        p1 = i + 1; p2 = j + 1;
+      }
+      diffRange(a, b, p1, hi1, p2, hi2, out, state);
+    }
+  }
+  for (const op of tail) out.push(op);
+}
+
+function diffOps(originalText, proposedText) {
+  const a = originalText.replace(/\r\n/g, '\n').split('\n');
+  const b = proposedText.replace(/\r\n/g, '\n').split('\n');
+  const out = [], state = { coarse: false };
+  diffRange(a, b, 0, a.length, 0, b.length, out, state);
+  return { ops: out, coarse: state.coarse, originalLines: a.length, proposedLines: b.length };
+}
+
+function collapseUnchanged(ops) {
+  const out = [];
+  let run = [];
+  const flush = () => {
+    if (!run.length) return;
+    if (run.length <= DIFF_CONTEXT * 2 + 1) out.push(...run);
+    else {
+      out.push(...run.slice(0, DIFF_CONTEXT));
+      out.push(['~', `${run.length - DIFF_CONTEXT * 2} unchanged lines`]);
+      out.push(...run.slice(-DIFF_CONTEXT));
+    }
+    run = [];
+  };
+  for (const op of ops) {
+    if (op[0] === ' ') run.push(op);
+    else { flush(); out.push(op); }
+  }
+  flush();
+  return out;
+}
+
+function renderRevisionView() {
+  const box = $('#revDiff');
+  box.innerHTML = '';
+  const add = (kind, text, lineNo) => {
+    const row = document.createElement('div');
+    row.className = `dl dl-${kind === ' ' ? 'ctx' : kind === '+' ? 'add' : kind === '-' ? 'del' : 'skip'}`;
+    const num = document.createElement('span');
+    num.className = 'dl-num';
+    num.textContent = lineNo ?? '';
+    const sign = document.createElement('span');
+    sign.className = 'dl-sign';
+    sign.textContent = kind === '~' ? '' : kind;
+    const body = document.createElement('span');
+    body.className = 'dl-text';
+    body.textContent = kind === '~' ? `⋯ ${text} ⋯` : text;
+    row.append(num, sign, body);
+    box.appendChild(row);
+  };
+
+  if (showWholeFile || !pendingOriginal) {
+    pendingRevision.replace(/\r\n/g, '\n').split('\n')
+      .forEach((l, i) => add(' ', l, i + 1));
+    if (!pendingOriginal) {
+      $('#revSummary').textContent =
+        'Original unavailable — showing the proposed file in full.';
+    }
+    return;
+  }
+
+  const { ops, coarse, originalLines, proposedLines } = diffOps(pendingOriginal, pendingRevision);
+  const added = ops.filter((o) => o[0] === '+').length;
+  const removed = ops.filter((o) => o[0] === '-').length;
+  $('#revSummary').textContent = (added || removed
+    ? `${added} line${added === 1 ? '' : 's'} added, ${removed} removed`
+      + (coarse ? ' (changes too large to align line-by-line)' : '')
+    : 'No differences from the original file.')
+    + ` — proposed ${proposedLines} lines vs original ${originalLines}.`;
+
+  // The AI is allowed to answer with just an edited section. Saving that as a
+  // revision would put a truncated file in the Repetrel folder looking every
+  // bit as printable as a whole one, so say so plainly before it is written.
+  const frag = $('#revFragment');
+  const looksPartial = originalLines > 50 && proposedLines < originalLines * 0.6;
+  frag.classList.toggle('hidden', !looksPartial);
+  if (looksPartial) {
+    frag.textContent = `This is only about ${Math.round(proposedLines / originalLines * 100)}%`
+      + ` the length of the original — it looks like an excerpt rather than a complete file.`
+      + ` Saving it produces a partial G-code file, which is not safe to print as-is.`
+      + ` Ask the AI for the complete file if you meant to print this.`;
+  }
+
+  let lineNo = 0;
+  for (const [kind, text] of collapseUnchanged(ops)) {
+    if (kind === ' ' || kind === '+') lineNo++;
+    else if (kind === '~') lineNo += Number(text.split(' ')[0]) || 0;
+    add(kind, text, kind === '-' || kind === '~' ? null : lineNo);
+  }
+}
+
+async function openRevisionReview(proposed) {
+  pendingRevision = proposed;
+  pendingOriginal = '';
+  showWholeFile = false;
+  $('#revToggle').textContent = 'View whole file';
+  $('#revStatus').textContent = '';
+  $('#revSave').disabled = false;
+  $('#revSummary').textContent = 'Comparing with the original…';
+  $('#revDiff').textContent = '';
+
+  const src = currentPrint?.gcode_source_path;
+  const dest = $('#revDest');
+  if (src) {
+    dest.className = 'hint';
+    dest.textContent = 'Saves into this print’s data folder and alongside the '
+      + 'original, ready to open in Repetrel. The original is never modified.';
+  } else {
+    dest.className = 'warn';
+    dest.textContent = 'This print was created by file upload, so the revision can '
+      + 'only be saved inside the app’s data folder — it will not appear next to '
+      + 'the original in the Repetrel project folder.';
+  }
+  $('#revisionDialog').showModal();
+
+  try {
+    const r = await fetch(`/api/prints/${currentPrint.id}/gcode`);
+    if (r.ok) pendingOriginal = await r.text();
+  } catch { /* diff falls back to whole-file view */ }
+  renderRevisionView();
+}
+
+$('#revToggle').onclick = () => {
+  showWholeFile = !showWholeFile;
+  $('#revToggle').textContent = showWholeFile ? 'View changes only' : 'View whole file';
+  renderRevisionView();
+};
+
+$('#revCancel').onclick = () => $('#revisionDialog').close();
+
+$('#revSave').onclick = async () => {
+  $('#revSave').disabled = true;
+  $('#revStatus').textContent = 'Saving…';
   const fd = new FormData();
-  fd.append('content', match[1]);
-  const r = await api(`/api/prints/${currentPrint.id}/revisions`, { method: 'POST', body: fd });
-  alert(r.repetrel_path
-    ? `Saved. Open it in Repetrel: ${r.repetrel_path}\n(The original file was not modified.)`
-    : `Saved as ${r.filename} in the print's data folder.`);
+  fd.append('content', pendingRevision);
+  try {
+    const r = await api(`/api/prints/${currentPrint.id}/revisions`,
+      { method: 'POST', body: fd });
+    $('#revisionDialog').close();
+    alert(r.repetrel_path
+      ? `Saved as ${r.filename}.\nOpen it in Repetrel: ${r.repetrel_path}\n(The original file was not modified.)`
+      : `Saved as ${r.filename} in the print's data folder.\n(No Repetrel copy — this print was created by upload.)`);
+  } catch (err) {
+    $('#revStatus').textContent = 'Error: ' + err.message;
+    $('#revSave').disabled = false;
+  }
 };
 
 // ---------- model picker ----------

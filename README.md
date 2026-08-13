@@ -57,11 +57,14 @@ API, and none is needed):
 - **In**: the new-print dialog lists recent `.gcode` files straight from
   `C:\RepetrelProjects` (configurable via `GCODE_DIR` in `.env`) — pick one
   from the list; plain file upload remains as a fallback.
-- **Out**: when the AI proposes an edit and you click *Save revision*, the
-  file is written **next to the original** as `<name>_rev01.gcode` (and also
-  archived in the print's data folder). In Repetrel it's one File > Open
-  away, in the folder students already use. **The original file is never
-  modified.**
+- **Out**: when the AI proposes G-code, a **Review** button appears on that
+  message. It opens a diff against the original — added and removed lines,
+  monospaced, long unchanged stretches collapsed — plus where the file will be
+  written, and a warning if the proposal looks like an excerpt rather than a
+  complete file. Nothing is written until you approve it. On save the file
+  goes **next to the original** as `<name>_rev01.gcode` (and is archived in
+  the print's data folder). In Repetrel it's one File > Open away, in the
+  folder students already use. **The original file is never modified.**
 - The AI knows Hyrel's locked-vs-editable rules: it won't touch the
   mandatory header lines (reporting/abort/homing), treats machine-specific
   values (M660, M140) as deliberate hand edits only, and warns when a file
@@ -208,4 +211,7 @@ Nothing below is known-broken — none of it can be settled off the machine.
 python -m venv .venv && . .venv/bin/activate
 pip install -r requirements.txt
 uvicorn app.main:app --reload --port 8137
+
+python smoke_test.py     # offline; no API calls
+node test_diff.js        # revision-diff logic (optional, needs node)
 ```
