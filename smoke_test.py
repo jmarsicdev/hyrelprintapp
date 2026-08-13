@@ -5,10 +5,18 @@ past-case retrieval layer without calling the Claude API. Run:
 
 import os
 import pathlib
+import shutil
 
 os.environ.setdefault("ANTHROPIC_API_KEY", "test-not-real")
 os.environ.setdefault("DATA_DIR", "./data-smoketest")
 os.environ.setdefault("GCODE_DIR", "./gcode-smoketest")
+
+# Start from a clean slate: the test writes settings (it switches the model to
+# Sonnet), so re-running against a leftover database would fail on assertions
+# that expect the defaults. Only ever removes this test's own scratch dirs.
+for _scratch in (os.environ["DATA_DIR"], os.environ["GCODE_DIR"]):
+    if _scratch.startswith("./") and "smoketest" in _scratch:
+        shutil.rmtree(_scratch, ignore_errors=True)
 pathlib.Path("./gcode-smoketest/jobs").mkdir(parents=True, exist_ok=True)
 
 from fastapi.testclient import TestClient  # noqa: E402
