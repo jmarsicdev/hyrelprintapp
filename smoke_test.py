@@ -3,6 +3,7 @@ past-case retrieval layer without calling the Claude API. Run:
     python smoke_test.py
 """
 
+import json
 import os
 import pathlib
 import shutil
@@ -96,11 +97,61 @@ def main() -> None:
     assert r.status_code == 200, r.text
     rev = r.json()["repetrel_path"]
     assert rev and rev.endswith("cup_rev01.gcode"), r.json()
-    assert pathlib.Path(rev).read_text() == "G21\nG1 X5\n"
-    assert src.read_text() == GCODE  # original untouched
+    assert pathlib.Path(rev).read_text(encoding="utf-8") == "G21\nG1 X5\n"
+    assert src.read_text(encoding="utf-8") == GCODE  # original untouched
     # Path traversal must be rejected.
     r = c.post("/api/prints", data={"printer_id": 1, "source_path": "../smoke_test.py"})
     assert r.status_code == 400, r.text
+
+    # Client-supplied names are untrusted: any page in any browser tab on this
+    # PC can POST here, so an upload name must not escape the print folder and
+    # a photo name must not read files outside it.
+    r = c.post("/api/prints", files={"gcode_file": ("../../escaped.gcode", GCODE)},
+               data={"printer_id": 1})
+    assert r.status_code == 200, r.text
+    assert r.json()["gcode_filename"] == "escaped.gcode", r.json()
+    escaped = r.json()["id"]
+    assert (pathlib.Path(os.environ["DATA_DIR"]) / "prints" / escaped
+            / "escaped.gcode").is_file()
+    secret = pathlib.Path(os.environ["DATA_DIR"]).resolve() / "SECRET.txt"
+    secret.write_text("lab secret", encoding="utf-8")
+    assert c.get(f"/api/prints/{escaped}/photos/{secret}").status_code == 404
+    assert c.get(f"/api/prints/{escaped}/photos/..%5C..%5CSECRET.txt").status_code == 404
+
+    # ---- the tuning loop: refine a print, then print the refinement ----
+
+    # Model output routinely contains µ, Ø, →, ≈; the Windows default encoding
+    # (cp1252) cannot encode several of those, which used to 500 on save.
+    UNICODE_GCODE = "G21 ; flow ≈ W×H×speed, nozzle Ø0.5, 1760 pulses/µL\nM221 S1.1 T11\n"
+    r = c.post(f"/api/prints/{p3}/revisions", data={"content": UNICODE_GCODE})
+    assert r.status_code == 200, r.text
+    rev2 = pathlib.Path(r.json()["repetrel_path"])
+    assert rev2.name == "cup_rev02.gcode", rev2
+    assert rev2.read_text(encoding="utf-8") == UNICODE_GCODE
+
+    # A second record made from the same original must not clobber the first
+    # student's revision files.
+    p4 = c.post("/api/prints", data={"printer_id": 1,
+                                     "source_path": "jobs/cup.gcode"}).json()["id"]
+    r = c.post(f"/api/prints/{p4}/revisions", data={"content": "G21\nG1 X9\n"})
+    other = pathlib.Path(r.json()["repetrel_path"])
+    assert other.name == "cup_rev03.gcode", other       # not rev01 again
+    assert pathlib.Path(rev).read_text(encoding="utf-8") == "G21\nG1 X5\n"  # intact
+    assert rev2.read_text(encoding="utf-8") == UNICODE_GCODE               # intact
+
+    # Close the loop: the revision is itself printable, so it becomes the
+    # source of the next print record, and can be refined again.
+    p5 = c.post("/api/prints", data={"printer_id": 1,
+                                     "source_path": "jobs/cup_rev02.gcode"}).json()["id"]
+    detail = c.get(f"/api/prints/{p5}").json()
+    assert detail["params"]["flow_settings_m221"][0]["S"] == 1.1, detail["params"]
+    r = c.post(f"/api/prints/{p5}/revisions", data={"content": "G21\nM221 S1.2 T11\n"})
+    assert pathlib.Path(r.json()["repetrel_path"]).name == "cup_rev02_rev01.gcode", r.json()
+
+    # meta.json stays valid, UTF-8, and carries the parsed parameters.
+    meta = json.loads((pathlib.Path(os.environ["DATA_DIR"]) / "prints" / p5 / "meta.json")
+                      .read_text(encoding="utf-8"))
+    assert meta["id"] == p5 and meta["params"]["flow_settings_m221"][0]["S"] == 1.1, meta
 
     # The phone-upload path is gone on purpose: it was the only reason to bind
     # to the LAN, and nothing here is authenticated. Keep it gone.

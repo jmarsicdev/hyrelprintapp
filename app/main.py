@@ -10,7 +10,7 @@ from fastapi.staticfiles import StaticFiles
 from PIL import Image
 
 from . import ai, db, gcode
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 
 from .config import DATA_DIR, DEFAULT_PRINTER, GCODE_DIR, PRINTS_DIR, STATIC_DIR
 
@@ -35,6 +35,25 @@ def print_dir(print_id: str):
     return d
 
 
+def safe_name(name: str, fallback: str = "upload.gcode") -> str:
+    """Reduce a client-supplied filename to a bare name. Multipart filenames
+    are attacker-controlled and any page in any browser tab on this PC can
+    POST here, so a name like ../../x must not escape the print folder."""
+    base = PurePosixPath(str(name).replace("\\", "/")).name.replace("\x00", "").strip()
+    return base[:120] if base and base not in (".", "..") else fallback
+
+
+def print_file(print_id: str, filename: str, sub: str = "") -> Path | None:
+    """A file inside this print's folder, or None if the name escapes it.
+    Also covers records written before names were sanitised."""
+    base = (print_dir(print_id) / sub).resolve()
+    try:
+        target = (base / filename).resolve()
+    except (OSError, ValueError):
+        return None
+    return target if target.is_relative_to(base) and target.is_file() else None
+
+
 def get_print(print_id: str) -> dict:
     with db.connect() as conn:
         row = conn.execute("SELECT * FROM prints WHERE id = ?", (print_id,)).fetchone()
@@ -56,7 +75,8 @@ def write_meta(print_id: str) -> None:
             "SELECT name, make, model FROM printers WHERE id = ?", (p["printer_id"],)).fetchone()
     p["photos"] = photos
     p["printer"] = dict(printer) if printer else None
-    (print_dir(print_id) / "meta.json").write_text(json.dumps(p, indent=2))
+    (print_dir(print_id) / "meta.json").write_text(
+        json.dumps(p, indent=2, ensure_ascii=False), encoding="utf-8")
 
 
 # ---------- printers ----------
@@ -95,18 +115,26 @@ def list_gcode_files():
     file directly instead of hunting through an OS file dialog."""
     if GCODE_DIR is None or not GCODE_DIR.exists():
         return {"available": False, "root": None, "files": []}
+    # stat() once per file, tolerating files that vanish mid-scan — Repetrel
+    # and the slicer write into this folder while we are listing it, and an
+    # unhandled error here would break the whole new-print dialog.
     found = []
     for pattern in ("*.gcode", "*.gc", "*.nc"):
-        found.extend(GCODE_DIR.rglob(pattern))
-    found.sort(key=lambda f: f.stat().st_mtime, reverse=True)
+        for f in GCODE_DIR.rglob(pattern):
+            try:
+                st = f.stat()
+            except OSError:
+                continue
+            found.append((st.st_mtime, st.st_size, f))
+    found.sort(key=lambda t: t[0], reverse=True)
     return {
         "available": True,
         "root": str(GCODE_DIR),
         "files": [
             {"path": str(f.relative_to(GCODE_DIR)),
-             "mtime": datetime.fromtimestamp(f.stat().st_mtime).isoformat(timespec="minutes"),
-             "size": f.stat().st_size}
-            for f in found[:100]
+             "mtime": datetime.fromtimestamp(mtime).isoformat(timespec="minutes"),
+             "size": size}
+            for mtime, size, f in found[:100]
         ],
     }
 
@@ -138,7 +166,7 @@ async def create_print(
         filename = src.name
     elif gcode_file is not None and gcode_file.filename:
         raw = await gcode_file.read()
-        filename = gcode_file.filename
+        filename = safe_name(gcode_file.filename)
     else:
         raise HTTPException(400, "provide a gcode file or a source_path")
 
@@ -282,10 +310,10 @@ async def set_custom_fields(print_id: str, fields_json: str = Form(...)):
 @app.get("/api/prints/{print_id}/gcode")
 def download_gcode(print_id: str):
     p = get_print(print_id)
-    path = PRINTS_DIR / print_id / p["gcode_filename"]
-    if not path.exists():
+    path = print_file(print_id, p["gcode_filename"])
+    if path is None:
         raise HTTPException(404, "gcode file missing")
-    return FileResponse(path, filename=p["gcode_filename"])
+    return FileResponse(path, filename=path.name)
 
 
 @app.post("/api/prints/{print_id}/revisions")
@@ -298,15 +326,24 @@ def save_revision(print_id: str, content: str = Form(...)):
     d = print_dir(print_id)
     n = 1 + sum(1 for f in d.glob("revision_*.gcode"))
     path = d / f"revision_{n:02d}.gcode"
-    path.write_text(content)
+    # UTF-8 explicitly: the model writes µ, Ø, →, ≈ in comments, and the
+    # Windows default (cp1252) cannot encode several of them.
+    path.write_text(content, encoding="utf-8")
 
     repetrel_path = None
     src = p.get("gcode_source_path")
     if src and GCODE_DIR is not None:
         sp = Path(src)
         if sp.is_relative_to(GCODE_DIR) and sp.parent.is_dir():
-            target = sp.parent / f"{sp.stem}_rev{n:02d}.gcode"
-            target.write_text(content)
+            # Never overwrite: two print records made from the same original
+            # would otherwise both claim <name>_rev01.gcode, and the second
+            # save would silently replace the first student's file.
+            k = n
+            target = sp.parent / f"{sp.stem}_rev{k:02d}.gcode"
+            while target.exists():
+                k += 1
+                target = sp.parent / f"{sp.stem}_rev{k:02d}.gcode"
+            target.write_text(content, encoding="utf-8")
             repetrel_path = str(target)
 
     return {"filename": path.name, "repetrel_path": repetrel_path}
@@ -344,8 +381,8 @@ async def upload_photo(print_id: str, file: UploadFile = File(...), caption: str
 
 @app.get("/api/prints/{print_id}/photos/{filename}")
 def get_photo(print_id: str, filename: str):
-    path = print_dir(print_id) / "photos" / filename
-    if ".." in filename or not path.exists():
+    path = print_file(print_id, filename, "photos")
+    if path is None:
         raise HTTPException(404)
     return FileResponse(path)
 
@@ -361,7 +398,7 @@ def build_lab_context(print_id: str, tags: str) -> str:
     lessons = DATA_DIR / "LESSONS.md"
     if lessons.exists():
         parts.append("Curated lab lessons (maintained by the lab):\n"
-                     + lessons.read_text()[:8000])
+                     + lessons.read_text(encoding="utf-8", errors="replace")[:8000])
 
     with db.connect() as conn:
         rows = [db.row_to_dict(r) for r in conn.execute(
@@ -399,8 +436,11 @@ def chat(print_id: str, message: str = Form(...), include_photos: bool = Form(Tr
         photos = [dict(r) for r in conn.execute(
             "SELECT filename FROM photos WHERE print_id = ? ORDER BY id", (print_id,))]
 
-    gcode_path = PRINTS_DIR / print_id / p["gcode_filename"]
-    gcode_text = gcode_path.read_text(errors="replace") if gcode_path.exists() else ""
+    gcode_path = print_file(print_id, p["gcode_filename"])
+    # Matches how the file was decoded when the record was created, so the AI
+    # sees the same text the parsed parameters came from.
+    gcode_text = (gcode_path.read_text(encoding="utf-8", errors="replace")
+                  if gcode_path else "")
     ctx = ai.build_print_context(
         p, printer["name"] if printer else "?",
         gcode.context_snippet(gcode_text, p["params"]) if gcode_text else "(no gcode on file)")
@@ -429,7 +469,7 @@ def chat(print_id: str, message: str = Form(...), include_photos: bool = Form(Tr
 
     # Chat transcript also lives in the print folder for dataset portability.
     log = print_dir(print_id) / "chat.md"
-    with log.open("a") as f:
+    with log.open("a", encoding="utf-8") as f:
         f.write(f"\n## user ({db.utcnow()})\n{message}\n\n## assistant\n{reply}\n")
 
     return {"reply": reply}

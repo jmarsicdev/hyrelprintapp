@@ -225,4 +225,14 @@ def chat(
             "The model declined to answer this request (safety classifier). "
             "Try rephrasing, or ask a lab supervisor to review the prompt."
         )
-    return "".join(b.text for b in msg.content if b.type == "text")
+    text = "".join(b.text for b in msg.content if b.type == "text")
+    if msg.stop_reason == "max_tokens":
+        # Say so loudly: a gcode block cut off mid-file still looks saveable,
+        # and a truncated revision is not safe to print.
+        text += (
+            "\n\n---\n**This reply hit the length limit and stopped early.** "
+            "Any G-code above is incomplete — do not save or print it as a "
+            "revision. Ask for the changed section only, or for the edit in "
+            "smaller pieces."
+        )
+    return text
