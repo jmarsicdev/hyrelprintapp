@@ -213,5 +213,6 @@ pip install -r requirements.txt
 uvicorn app.main:app --reload --port 8137
 
 python smoke_test.py     # offline; no API calls
-node test_diff.js        # revision-diff logic (optional, needs node)
+node test_diff.js        # revision-diff logic     (optional, needs node)
+node test_markdown.js    # chat markdown rendering (optional, needs node)
 ```

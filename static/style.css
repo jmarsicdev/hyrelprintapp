@@ -59,19 +59,65 @@ dd { margin: 0; }
 .model-hint { margin: .2rem 0 .5rem; }
 
 #chatLog {
-  height: 420px; overflow-y: auto; border: 1px solid var(--border);
-  border-radius: 6px; padding: .6rem; background: #fafbfc; margin-bottom: .5rem;
+  height: 480px; overflow-y: auto; border: 1px solid var(--border);
+  border-radius: 8px; padding: 1rem 1.1rem; background: #fff; margin-bottom: .5rem;
 }
-.msg { margin: .4rem 0; padding: .5rem .7rem; border-radius: 8px; white-space: pre-wrap; font-size: .9rem; }
-.msg.user { background: #dbeafe; margin-left: 15%; }
-.msg.assistant { background: #e9ecef; margin-right: 10%; }
+.msg { font-size: .95rem; line-height: 1.65; }
+/* The student's own words: a compact bubble, verbatim. */
+.msg.user {
+  white-space: pre-wrap; background: #eef2f7; border: 1px solid #dde4ec;
+  border-radius: 12px; padding: .55rem .8rem; margin: 1.1rem 0 1.1rem auto;
+  max-width: 85%; width: fit-content;
+}
+/* The answer: full width, plain prose, room to breathe. */
+.msg.assistant { margin: 1.1rem 0 1.4rem; color: #1c2430; }
+.msg.assistant + .msg.user { margin-top: 1.4rem; }
 .msg.pending { color: #64748b; font-style: italic; }
+.msg:first-child { margin-top: 0; }
+
+.msg.assistant p { margin: 0 0 .75rem; }
+.msg.assistant > :last-child { margin-bottom: 0; }
+.md-h { margin: 1.1rem 0 .5rem; line-height: 1.3; font-weight: 650; }
+h3.md-h { font-size: 1.05rem; }
+h4.md-h { font-size: .97rem; }
+h5.md-h, h6.md-h { font-size: .93rem; color: #475569; }
+.msg.assistant ul, .msg.assistant ol { margin: 0 0 .75rem; padding-left: 1.3rem; }
+.msg.assistant li { margin: .22rem 0; }
+.msg.assistant li > ul, .msg.assistant li > ol { margin: .22rem 0 0; }
+.msg.assistant blockquote {
+  margin: 0 0 .75rem; padding: .1rem 0 .1rem .8rem;
+  border-left: 3px solid #cbd5e1; color: #475569;
+}
+.msg.assistant hr { border: 0; border-top: 1px solid var(--border); margin: 1rem 0; }
+.msg.assistant a { color: #1d4ed8; }
+.md-code-inline {
+  font-family: ui-monospace, "Cascadia Mono", Consolas, monospace;
+  font-size: .87em; background: #f1f5f9; border: 1px solid #e2e8f0;
+  border-radius: 4px; padding: .05rem .3rem;
+}
+.md-table { border-collapse: collapse; margin: 0 0 .75rem; font-size: .88rem; display: block; overflow-x: auto; }
+.md-table th, .md-table td { border: 1px solid var(--border); padding: .3rem .55rem; text-align: left; }
+.md-table th { background: #f1f5f9; font-weight: 600; }
+
+.codeblock {
+  margin: 0 0 .8rem; border: 1px solid #dbe2ea; border-radius: 8px;
+  overflow: hidden; background: #f8fafc;
+}
+.codebar {
+  display: flex; align-items: center; gap: .5rem; padding: .3rem .5rem .3rem .7rem;
+  background: #eef2f7; border-bottom: 1px solid #dbe2ea;
+}
+.codelang { font-size: .72rem; text-transform: uppercase; letter-spacing: .04em; color: #64748b; }
+.codebar button { margin-left: auto; font-size: .75rem; padding: .2rem .55rem; }
+.codecopy { background: #64748b; }
+.codeblock pre { margin: 0; padding: .6rem .7rem; overflow-x: auto; }
+.codeblock code {
+  font-family: ui-monospace, "Cascadia Mono", Consolas, monospace;
+  font-size: .82rem; line-height: 1.5; white-space: pre;
+}
 #chatInput { width: 100%; padding: .5rem; border: 1px solid var(--border); border-radius: 6px; }
 .chat-controls { display: flex; justify-content: space-between; align-items: center; margin-top: .3rem; }
-.review-rev {
-  display: block; margin: .5rem 0 .1rem; background: #15803d;
-  font-size: .82rem; padding: .35rem .7rem;
-}
+.review-rev { background: #15803d; font-size: .75rem; padding: .2rem .6rem; }
 
 /* revision review dialog */
 dialog.wide { width: min(62rem, 94vw); }

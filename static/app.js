@@ -98,30 +98,221 @@ function gcodeBlocks(text) {
   return blocks;
 }
 
+// ---------- markdown rendering ----------
+// Small on purpose: the app ships offline as a single exe, so no library.
+// Everything goes through textContent — model output is never parsed as HTML.
+
+function mdInline(text, parent) {
+  const re = /(`+)([\s\S]*?)\1|\*\*([\s\S]+?)\*\*|\*([^*\n]+?)\*|~~([\s\S]+?)~~|\[([^\]]+?)\]\(([^)\s]+?)\)/g;
+  let last = 0, m;
+  while ((m = re.exec(text)) !== null) {
+    if (m.index > last) parent.appendChild(document.createTextNode(text.slice(last, m.index)));
+    if (m[2] !== undefined) {
+      const c = document.createElement('code');
+      c.className = 'md-code-inline';
+      c.textContent = m[2].trim();
+      parent.appendChild(c);
+    } else if (m[3] !== undefined) {
+      const b = document.createElement('strong'); mdInline(m[3], b); parent.appendChild(b);
+    } else if (m[4] !== undefined) {
+      const i = document.createElement('em'); mdInline(m[4], i); parent.appendChild(i);
+    } else if (m[5] !== undefined) {
+      const s = document.createElement('s'); mdInline(m[5], s); parent.appendChild(s);
+    } else if (m[6] !== undefined) {
+      // Only ordinary web links become anchors; anything else stays literal.
+      if (/^(https?:|mailto:)/i.test(m[7])) {
+        const a = document.createElement('a');
+        a.href = m[7]; a.target = '_blank'; a.rel = 'noopener noreferrer';
+        a.textContent = m[6];
+        parent.appendChild(a);
+      } else {
+        parent.appendChild(document.createTextNode(m[0]));
+      }
+    }
+    last = re.lastIndex;
+  }
+  if (last < text.length) parent.appendChild(document.createTextNode(text.slice(last)));
+}
+
+function mdCodeBlock(lang, code, onCodeBlock) {
+  const wrap = document.createElement('div');
+  wrap.className = 'codeblock';
+  const bar = document.createElement('div');
+  bar.className = 'codebar';
+  const label = document.createElement('span');
+  label.className = 'codelang';
+  label.textContent = lang || 'text';
+  const copy = document.createElement('button');
+  copy.type = 'button';
+  copy.className = 'codecopy';
+  copy.textContent = 'Copy';
+  copy.onclick = async () => {
+    try {
+      await navigator.clipboard.writeText(code);
+      copy.textContent = 'Copied';
+      setTimeout(() => { copy.textContent = 'Copy'; }, 1200);
+    } catch { copy.textContent = 'Copy failed'; }
+  };
+  bar.append(label, copy);
+  const pre = document.createElement('pre');
+  const c = document.createElement('code');
+  c.textContent = code;
+  pre.appendChild(c);
+  wrap.append(bar, pre);
+  if (onCodeBlock) onCodeBlock(lang, code, bar);
+  return wrap;
+}
+
+function mdList(lines, start, onCodeBlock) {
+  const head = lines[start].match(/^(\s*)(?:[-*+]|\d+[.)])\s+/);
+  const baseIndent = head[1].length;
+  const list = document.createElement(/^\s*\d+[.)]\s/.test(lines[start]) ? 'ol' : 'ul');
+  let i = start;
+  while (i < lines.length) {
+    const m = lines[i].match(/^(\s*)(?:[-*+]|\d+[.)])\s+(.*)$/);
+    if (!m) {
+      // A wrapped continuation line belongs to the item above it.
+      if (lines[i].trim() && lines[i].search(/\S/) > baseIndent && list.lastChild) {
+        list.lastChild.appendChild(document.createTextNode(' '));
+        mdInline(lines[i].trim(), list.lastChild);
+        i++; continue;
+      }
+      break;
+    }
+    const indent = m[1].length;
+    if (indent < baseIndent) break;
+    if (indent > baseIndent) {
+      const sub = mdList(lines, i, onCodeBlock);
+      (list.lastChild || list).appendChild(sub.node);
+      i = sub.next; continue;
+    }
+    const li = document.createElement('li');
+    mdInline(m[2], li);
+    list.appendChild(li);
+    i++;
+  }
+  return { node: list, next: i };
+}
+
+function mdTable(lines, start) {
+  const cells = (l) => l.trim().replace(/^\||\|$/g, '').split('|').map((s) => s.trim());
+  const table = document.createElement('table');
+  table.className = 'md-table';
+  const thead = document.createElement('thead');
+  const hr = document.createElement('tr');
+  for (const c of cells(lines[start])) {
+    const th = document.createElement('th'); mdInline(c, th); hr.appendChild(th);
+  }
+  thead.appendChild(hr);
+  table.appendChild(thead);
+  const tbody = document.createElement('tbody');
+  let i = start + 2;
+  while (i < lines.length && lines[i].trim() && lines[i].includes('|')) {
+    const tr = document.createElement('tr');
+    for (const c of cells(lines[i])) {
+      const td = document.createElement('td'); mdInline(c, td); tr.appendChild(td);
+    }
+    tbody.appendChild(tr);
+    i++;
+  }
+  table.appendChild(tbody);
+  return { node: table, next: i };
+}
+
+function renderMarkdown(text, onCodeBlock) {
+  const frag = document.createDocumentFragment();
+  const lines = String(text ?? '').replace(/\r\n/g, '\n').split('\n');
+  const para = [];
+  const flush = () => {
+    if (!para.length) return;
+    const p = document.createElement('p');
+    mdInline(para.join(' '), p);
+    frag.appendChild(p);
+    para.length = 0;
+  };
+  let i = 0;
+  while (i < lines.length) {
+    const line = lines[i];
+    const fence = line.match(/^\s*```\s*([A-Za-z0-9_+-]*)\s*$/);
+    if (fence) {
+      flush();
+      const body = [];
+      i++;
+      while (i < lines.length && !/^\s*```\s*$/.test(lines[i])) body.push(lines[i++]);
+      i++;
+      frag.appendChild(mdCodeBlock(fence[1], body.join('\n'), onCodeBlock));
+      continue;
+    }
+    const h = line.match(/^(#{1,4})\s+(.*)$/);
+    if (h) {
+      flush();
+      const el = document.createElement(`h${Math.min(h[1].length + 2, 6)}`);
+      el.className = 'md-h';
+      mdInline(h[2], el);
+      frag.appendChild(el);
+      i++; continue;
+    }
+    if (/^\s*(-{3,}|\*{3,}|_{3,})\s*$/.test(line)) {
+      flush(); frag.appendChild(document.createElement('hr')); i++; continue;
+    }
+    if (/^\s*>/.test(line)) {
+      flush();
+      const buf = [];
+      while (i < lines.length && /^\s*>/.test(lines[i])) buf.push(lines[i++].replace(/^\s*>\s?/, ''));
+      const bq = document.createElement('blockquote');
+      bq.appendChild(renderMarkdown(buf.join('\n'), onCodeBlock));
+      frag.appendChild(bq);
+      continue;
+    }
+    if (/^\s*(?:[-*+]\s+|\d+[.)]\s+)/.test(line)) {
+      flush();
+      const l = mdList(lines, i, onCodeBlock);
+      frag.appendChild(l.node); i = l.next; continue;
+    }
+    if (/^\s*\|.*\|\s*$/.test(line) && i + 1 < lines.length
+        && /^\s*\|[\s:|-]+\|\s*$/.test(lines[i + 1])) {
+      flush();
+      const t = mdTable(lines, i);
+      frag.appendChild(t.node); i = t.next; continue;
+    }
+    if (!line.trim()) { flush(); i++; continue; }
+    para.push(line.trim());
+    i++;
+  }
+  flush();
+  return frag;
+}
+
+function renderMessage(role, content) {
+  const div = document.createElement('div');
+  div.className = `msg ${role}`;
+  if (role === 'user') {
+    // Keep the student's own words verbatim, including line breaks.
+    div.textContent = content;
+    return div;
+  }
+  let n = 0;
+  const total = gcodeBlocks(content).length;
+  div.appendChild(renderMarkdown(content, (lang, code, bar) => {
+    if (lang.toLowerCase() !== 'gcode') return;
+    n++;
+    // The review button lives on the block itself, so what you approve is
+    // unambiguously the code you are looking at.
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'review-rev';
+    btn.textContent = total > 1 ? `Review block ${n} of ${total}…` : 'Review & save…';
+    const captured = code;
+    btn.onclick = () => openRevisionReview(captured);
+    bar.appendChild(btn);
+  }));
+  return div;
+}
+
 function renderChat(messages) {
   const log = $('#chatLog');
   log.innerHTML = '';
-  for (const m of messages) {
-    const div = document.createElement('div');
-    div.className = `msg ${m.role}`;
-    const body = document.createElement('span');
-    body.textContent = m.content;
-    div.appendChild(body);
-    // A review button per proposed block, attached to the message it came
-    // from — so what you approve is always the block you are looking at.
-    if (m.role === 'assistant') {
-      gcodeBlocks(m.content).forEach((code, i, all) => {
-        const btn = document.createElement('button');
-        btn.className = 'review-rev';
-        btn.textContent = all.length > 1
-          ? `Review G-code block ${i + 1} of ${all.length}…`
-          : 'Review this G-code…';
-        btn.onclick = () => openRevisionReview(code);
-        div.appendChild(btn);
-      });
-    }
-    log.appendChild(div);
-  }
+  for (const m of messages) log.appendChild(renderMessage(m.role, m.content));
   log.scrollTop = log.scrollHeight;
 }
 
@@ -286,10 +477,7 @@ $('#chatForm').onsubmit = async (e) => {
   if (!text) return;
   input.value = '';
   const log = $('#chatLog');
-  const mine = document.createElement('div');
-  mine.className = 'msg user';
-  mine.textContent = text;
-  log.appendChild(mine);
+  log.appendChild(renderMessage('user', text));
   const wait = document.createElement('div');
   wait.className = 'msg assistant pending';
   wait.textContent = 'Thinking… (this can take a minute for big files)';
@@ -301,8 +489,7 @@ $('#chatForm').onsubmit = async (e) => {
     fd.append('message', text);
     fd.append('include_photos', $('#includePhotos').checked);
     const r = await api(`/api/prints/${currentPrint.id}/chat`, { method: 'POST', body: fd });
-    wait.classList.remove('pending');
-    wait.textContent = r.reply;
+    wait.replaceWith(renderMessage('assistant', r.reply));
     const p = await api(`/api/prints/${currentPrint.id}`);
     renderChat(p.chat);
   } catch (err) {
