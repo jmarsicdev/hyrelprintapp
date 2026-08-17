@@ -169,4 +169,40 @@ check('a realistic reply renders end to end', () => {
   assert.ok(out.includes('M221 S0.9 T11 P1760 W0.5 Z0.3'), 'gcode present');
 });
 
+check('emphasis followed by maths terminates (re-entrant regex state)', () => {
+  // splitMath is re-entrant: rendering *emphasis* calls back into it. With a
+  // shared /g regex the inner call reset lastIndex and the outer loop never
+  // finished — hanging the chat pane on the most ordinary reply there is.
+  const cases = [
+    'The *flow rate* is $Q = WHv$ for this head.',
+    'Set **solids** to $x$ percent.',
+    '- the *flow* $Q$ matters',
+    '## The *flow* $Q$',
+    '> the *flow* $Q$',
+    '| *x* $y$ | z |',
+    'The *rate* is $$Q = W H v$$',
+    '*|*$b$',
+    '~~old~~ value $S$ replaced',
+  ];
+  for (const md of cases) {
+    const node = renderMarkdown(md);
+    const n = (function count(x) {
+      return 1 + (x.children || []).reduce((a, c) => a + count(c), 0);
+    })(node);
+    assert.ok(n < 400, `${JSON.stringify(md)} produced ${n} nodes — runaway`);
+  }
+});
+
+check('deeply nested blockquotes do not blow the stack', () => {
+  const node = renderMarkdown('>'.repeat(400) + ' deep');
+  assert.ok(text(node).includes('deep'), 'content survives');
+});
+
+check('unterminated constructs still terminate', () => {
+  for (const md of ['```gcode\nM221 S1', 'a $x unterminated', '$$open', '- item\n  - ',
+    '| a | b |\n| --- | --- |', '**bold', 'x^', '$\\frac{1}{$']) {
+    renderMarkdown(md); // must simply return
+  }
+});
+
 console.log(`\n${pass}/${pass} markdown tests passed`);

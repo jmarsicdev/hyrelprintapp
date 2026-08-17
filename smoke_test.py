@@ -180,6 +180,16 @@ def main() -> None:
     assert c.post(f"/api/prints/{pf['id']}/record",
                   data={"solids_loading_pct": "abc"}).status_code == 400
     assert c.post(f"/api/prints/{pf['id']}/record", data={}).status_code == 400
+    # inf/nan must never reach the database: JSON cannot represent them, so a
+    # single committed row would 500 every later read of the prints list.
+    for bad in ("inf", "-inf", "Infinity", "1e400", "nan"):
+        r = c.post(f"/api/prints/{pf['id']}/record", data={"solids_loading_pct": bad})
+        assert r.status_code == 400, f"{bad!r} was accepted: {r.text}"
+        assert c.get("/api/prints").status_code == 200, f"prints list broken after {bad!r}"
+    r = c.post("/api/prints", files={"gcode_file": ("inf.gcode", GCODE)},
+               data={"printer_id": 1, "nozzle_diameter_mm": "1e400"})
+    assert r.status_code == 400, r.text
+    assert c.get("/api/prints").status_code == 200
     meta_pf = json.loads((pathlib.Path(os.environ["DATA_DIR"]) / "prints" / pf["id"]
                           / "meta.json").read_text(encoding="utf-8"))
     assert meta_pf["print_speed"] == "9 mm/s", meta_pf

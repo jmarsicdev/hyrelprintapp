@@ -1,6 +1,7 @@
 import hashlib
 import io
 import json
+import math
 import secrets
 from datetime import datetime
 
@@ -34,6 +35,22 @@ def print_dir(print_id: str):
     d = PRINTS_DIR / print_id
     (d / "photos").mkdir(parents=True, exist_ok=True)
     return d
+
+
+def finite(raw, field: str) -> float | None:
+    """Reject inf/nan before they reach the database. JSON has no way to
+    represent them, so a single "1e400" would make every later read of the
+    prints list fail with a 500 — permanently, since the row is already
+    committed — and would write bare Infinity into meta.json."""
+    if raw is None or raw == "":
+        return None
+    try:
+        value = float(raw)
+    except (TypeError, ValueError):
+        raise HTTPException(400, f"{field} must be a number")
+    if not math.isfinite(value):
+        raise HTTPException(400, f"{field} must be a finite number")
+    return value
 
 
 def safe_name(name: str, fallback: str = "upload.gcode") -> str:
@@ -191,7 +208,9 @@ async def create_print(
                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (print_id, printer_id, db.utcnow(), operator, filename, sha,
              str(src) if src else "", json.dumps(params), feedstock_batch,
-             solids_loading_pct, nozzle_diameter_mm, spiral_spacing_mm,
+             finite(solids_loading_pct, "solids_loading_pct"),
+             finite(nozzle_diameter_mm, "nozzle_diameter_mm"),
+             finite(spiral_spacing_mm, "spiral_spacing_mm"),
              print_speed, pressure_setting, notes),
         )
     write_meta(print_id)
@@ -318,13 +337,7 @@ async def update_record(print_id: str, request: Request):
             continue
         raw = str(form[key]).strip()
         if caster is float:
-            if raw == "":
-                value = None
-            else:
-                try:
-                    value = float(raw)
-                except ValueError:
-                    raise HTTPException(400, f"{key} must be a number")
+            value = None if raw == "" else finite(raw, key)
         else:
             value = raw
         sets.append(f"{key} = ?")

@@ -2,6 +2,23 @@ let currentPrint = null;
 let knownTags = [];
 let modelInfo = [];
 
+const RECORD_FIELDS = ['operator', 'feedstock_batch', 'solids_loading_pct',
+  'nozzle_diameter_mm', 'spiral_spacing_mm', 'print_speed', 'pressure_setting',
+  'notes'];
+// What the record form held when it was last loaded or saved, so we can send
+// only the fields this person actually edited.
+let loadedRecord = {};
+
+function snapshotRecord() {
+  const form = document.querySelector('#recordForm');
+  const snap = {};
+  for (const name of RECORD_FIELDS) {
+    const el = form && form.elements[name];
+    if (el) snap[name] = el.value;
+  }
+  return snap;
+}
+
 const $ = (sel) => document.querySelector(sel);
 
 async function api(path, opts) {
@@ -131,12 +148,11 @@ async function openPrint(id) {
   }
 
   const form = $('#recordForm');
-  for (const name of ['operator', 'feedstock_batch', 'solids_loading_pct',
-    'nozzle_diameter_mm', 'spiral_spacing_mm', 'print_speed', 'pressure_setting',
-    'notes']) {
+  for (const name of RECORD_FIELDS) {
     const el = form.elements[name];
     if (el) el.value = p[name] ?? '';
   }
+  loadedRecord = snapshotRecord();
 
   $('#outcomeSelect').value = p.outcome;
   $('#outcomeNotes').value = p.outcome_notes;
@@ -154,8 +170,16 @@ function renderCustomFields(custom) {
     row.className = 'field-row';
     row.dataset.key = k;
     row.dataset.val = v;
-    row.innerHTML = `<b>${k}</b>: ${v} <button type="button" class="field-del">×</button>`;
-    row.querySelector('.field-del').onclick = () => { row.remove(); saveCustomFields(); };
+    // Built as nodes, not markup: these values come back from the server and
+    // a name like <img src=x onerror=...> would otherwise execute.
+    const label = document.createElement('b');
+    label.textContent = k;
+    const del = document.createElement('button');
+    del.type = 'button';
+    del.className = 'field-del';
+    del.textContent = '×';
+    del.onclick = () => { row.remove(); saveCustomFields(); };
+    row.append(label, document.createTextNode(`: ${v} `), del);
     box.appendChild(row);
   }
 }
@@ -386,15 +410,19 @@ function looksLikeMath(s) {
 }
 
 function splitMath(text, onText, onMath) {
+  // A fresh regex per call. This function is re-entrant — onText renders
+  // emphasis, which comes back through here — and a shared /g regex has a
+  // mutable lastIndex, so the inner call would reset the outer loop and it
+  // would never terminate on input as ordinary as "the *flow* is $Q = WHv$".
+  const re = new RegExp(MATH_RE.source, 'g');
   let last = 0, m;
-  MATH_RE.lastIndex = 0;
-  while ((m = MATH_RE.exec(text)) !== null) {
+  while ((m = re.exec(text)) !== null) {
     const inline1 = m[4];
     if (inline1 !== undefined && !looksLikeMath(inline1)) continue;
     if (m.index > last) onText(text.slice(last, m.index));
     const display = m[1] !== undefined || m[2] !== undefined;
     onMath(m[1] ?? m[2] ?? m[3] ?? m[4], display);
-    last = MATH_RE.lastIndex;
+    last = re.lastIndex;
   }
   if (last < text.length) onText(text.slice(last));
 }
@@ -533,8 +561,15 @@ function mdTable(lines, start) {
   return { node: table, next: i };
 }
 
-function renderMarkdown(text, onCodeBlock) {
+function renderMarkdown(text, onCodeBlock, depth) {
   const frag = document.createDocumentFragment();
+  depth = depth || 0;
+  // Nested blockquotes recurse; a pathological ">>>>>…" would otherwise blow
+  // the stack and leave the chat pane blank.
+  if (depth > 12) {
+    frag.appendChild(document.createTextNode(String(text ?? '')));
+    return frag;
+  }
   const lines = String(text ?? '').replace(/\r\n/g, '\n').split('\n');
   const para = [];
   const flush = () => {
@@ -574,7 +609,7 @@ function renderMarkdown(text, onCodeBlock) {
       const buf = [];
       while (i < lines.length && /^\s*>/.test(lines[i])) buf.push(lines[i++].replace(/^\s*>\s?/, ''));
       const bq = document.createElement('blockquote');
-      bq.appendChild(renderMarkdown(buf.join('\n'), onCodeBlock));
+      bq.appendChild(renderMarkdown(buf.join('\n'), onCodeBlock, depth + 1));
       frag.appendChild(bq);
       continue;
     }
@@ -639,16 +674,19 @@ $('#backBtn').onclick = () => {
 };
 
 $('#newPrintBtn').onclick = async () => {
+  // new Option(...) sets text, never markup — a gcode filename in the
+  // Repetrel folder is not something we should be parsing as HTML.
   const printers = await api('/api/printers');
-  $('#printerSelect').innerHTML = printers
-    .map((p) => `<option value="${p.id}">${p.name}</option>`).join('');
+  const psel = $('#printerSelect');
+  psel.innerHTML = '';
+  for (const p of printers) psel.add(new Option(p.name, p.id));
   try {
     const g = await api('/api/gcode-files');
     if (g.available && g.files.length) {
-      $('#serverGcode').innerHTML =
-        '<option value="">— upload a file below instead —</option>' +
-        g.files.map((f) =>
-          `<option value="${f.path}">${f.path} (${f.mtime})</option>`).join('');
+      const gsel = $('#serverGcode');
+      gsel.innerHTML = '';
+      gsel.add(new Option('— upload a file below instead —', ''));
+      for (const f of g.files) gsel.add(new Option(`${f.path} (${f.mtime})`, f.path));
       $('#serverGcodeRow').classList.remove('hidden');
     }
   } catch { /* folder not configured — upload only */ }
@@ -749,8 +787,9 @@ $('#captureBtn').onclick = async () => {
     await startCamera(null); // permission prompt first, so labels are visible
     const devices = (await navigator.mediaDevices.enumerateDevices())
       .filter((d) => d.kind === 'videoinput');
-    $('#cameraSelect').innerHTML = devices
-      .map((d) => `<option value="${d.deviceId}">${d.label || 'camera'}</option>`).join('');
+    const csel = $('#cameraSelect');
+    csel.innerHTML = '';
+    for (const d of devices) csel.add(new Option(d.label || 'camera', d.deviceId));
   } catch (err) {
     $('#captureStatus').textContent =
       'No camera access: ' + err.message + ' (is the device plugged in?)';
@@ -1073,9 +1112,10 @@ function showModelHint(id) {
 async function loadModels() {
   const r = await api('/api/models');
   modelInfo = r.models;
-  $('#modelSelect').innerHTML = r.models
-    .map((m) => `<option value="${m.id}">${m.name}</option>`).join('');
-  $('#modelSelect').value = r.current;
+  const msel = $('#modelSelect');
+  msel.innerHTML = '';
+  for (const m of r.models) msel.add(new Option(m.name, m.id));
+  msel.value = r.current;
   showModelHint(r.current);
 }
 
@@ -1142,9 +1182,20 @@ $('#recordForm').onsubmit = async (e) => {
   const status = $('#recordStatus');
   status.textContent = 'Saving…';
   try {
-    const fd = new FormData(e.target);
+    // Send only what actually changed. The endpoint updates just the keys it
+    // receives, so posting the whole form would overwrite a field someone
+    // else edited on this print with whatever this page loaded earlier.
+    const fd = new FormData();
+    let changed = 0;
+    for (const [name, was] of Object.entries(loadedRecord)) {
+      const el = e.target.elements[name];
+      if (!el) continue;
+      if (el.value !== was) { fd.append(name, el.value); changed++; }
+    }
+    if (!changed) { status.textContent = 'No changes.'; setTimeout(() => { status.textContent = ''; }, 3000); return; }
     const p = await api(`/api/prints/${currentPrint.id}/record`,
       { method: 'POST', body: fd });
+    loadedRecord = snapshotRecord();
     currentPrint = { ...currentPrint, ...p };
     status.textContent = 'Saved.';
   } catch (err) {
