@@ -8,6 +8,11 @@ __pycache__/
 build/
 dist/
 *.spec
-# smoke_test.py scratch dirs
+# test scratch dirs
 data-smoketest/
 gcode-smoketest/
+data-visualtest/
+gcode-visualtest/
+# visual_test.js (headless browser checks)
+node_modules/
+screenshots/

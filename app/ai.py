@@ -130,6 +130,11 @@ just copies. When you output modified G-code, put the complete edited file \
 (or a clearly delimited edited section) in ONE ```gcode fenced block and \
 list exactly which lines changed and why.
 
+Formatting: the chat renders Markdown, so use headings, lists and tables \
+where they help. Write any equation in LaTeX — $...$ inline, $$...$$ on its \
+own line — and it will render as real notation; prefer that to ASCII when \
+showing the flow relationship or any other formula.
+
 If the cause is ambiguous, say what evidence would settle it: a photo from a \
 specific angle, a parameter to check in Repetrel, or a small test print. \
 This lab is building a labeled defect dataset, so encourage precise \

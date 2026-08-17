@@ -12,40 +12,131 @@ async function api(path, opts) {
 
 // ---------- list ----------
 
+function cell(tr, text, cls) {
+  const td = document.createElement('td');
+  if (cls) td.className = cls;
+  td.textContent = text ?? '';
+  tr.appendChild(td);
+  return td;
+}
+
 async function loadPrints() {
   const prints = await api('/api/prints');
   const tbody = $('#printsTable tbody');
   tbody.innerHTML = '';
   for (const p of prints) {
     const tr = document.createElement('tr');
-    tr.innerHTML = `<td>${p.id}</td><td>${p.created_at.slice(0, 10)}</td>` +
-      `<td>${p.printer_name ?? ''}</td><td>${p.operator}</td>` +
-      `<td class="outcome-${p.outcome}">${p.outcome}</td><td>${p.photo_count}</td>`;
+    cell(tr, p.id);
+    cell(tr, p.created_at.slice(0, 10));
+    cell(tr, p.printer_name ?? '');
+    cell(tr, p.operator);
+    cell(tr, p.outcome, `outcome-${p.outcome}`);
+    cell(tr, p.photo_count);
     tr.onclick = () => openPrint(p.id);
     tbody.appendChild(tr);
   }
+  renderPrintNotes(prints);
 }
+
+// ---------- notes column ----------
+
+function renderPrintNotes(prints) {
+  const box = $('#printNotesList');
+  box.innerHTML = '';
+  const withNotes = prints.filter((p) => (p.notes || '').trim() || (p.outcome_notes || '').trim());
+  if (!withNotes.length) {
+    const empty = document.createElement('p');
+    empty.className = 'hint';
+    empty.textContent = 'No print notes yet. Notes you write on a print show up here.';
+    box.appendChild(empty);
+    return;
+  }
+  for (const p of withNotes) {
+    const card = document.createElement('div');
+    card.className = 'note-card';
+    const head = document.createElement('div');
+    head.className = 'note-head';
+    const who = document.createElement('span');
+    who.textContent = `${p.id}${p.operator ? ' · ' + p.operator : ''}`;
+    const when = document.createElement('span');
+    when.textContent = p.created_at.slice(0, 10);
+    head.append(who, when);
+    card.appendChild(head);
+    if ((p.notes || '').trim()) {
+      const body = document.createElement('div');
+      body.className = 'note-body';
+      body.textContent = p.notes;
+      card.appendChild(body);
+    }
+    if ((p.outcome_notes || '').trim()) {
+      const oc = document.createElement('div');
+      oc.className = 'note-outcome';
+      const label = document.createElement('strong');
+      label.textContent = `${p.outcome}: `;
+      oc.append(label, document.createTextNode(p.outcome_notes));
+      card.appendChild(oc);
+    }
+    card.onclick = () => openPrint(p.id);
+    box.appendChild(card);
+  }
+}
+
+async function loadLabNotes() {
+  try {
+    const r = await api('/api/lab-notes');
+    $('#labNotes').value = r.text || '';
+  } catch { /* leave empty */ }
+}
+
+$('#saveLabNotes').onclick = async () => {
+  const fd = new FormData();
+  fd.append('text', $('#labNotes').value);
+  try {
+    await api('/api/lab-notes', { method: 'POST', body: fd });
+    $('#labNotesStatus').textContent = 'Saved — the AI sees this on every print.';
+  } catch (err) {
+    $('#labNotesStatus').textContent = 'Error: ' + err.message;
+  }
+  setTimeout(() => { $('#labNotesStatus').textContent = ''; }, 4000);
+};
 
 // ---------- detail ----------
 
 async function openPrint(id) {
   const p = await api(`/api/prints/${id}`);
   currentPrint = p;
-  $('#printList').classList.add('hidden');
+  $('#homeGrid').classList.add('hidden');
   $('#printDetail').classList.remove('hidden');
   $('#detailTitle').textContent = `Print ${p.id}`;
 
+  // Read-only facts: what the file and the parser say. Everything the student
+  // types lives in the editable record form below.
   const meta = $('#detailMeta');
+  meta.innerHTML = '';
   const rows = {
-    'Created': p.created_at, 'Operator': p.operator || '—',
-    'G-code': p.gcode_filename, 'Feedstock batch': p.feedstock_batch || '—',
-    'Solids %': p.solids_loading_pct ?? '—', 'Nozzle mm': p.nozzle_diameter_mm ?? '—',
+    'Created': p.created_at,
+    'G-code': p.gcode_filename,
+    'From': p.gcode_source_path || 'uploaded',
     'Layers (est.)': p.params?.estimated_layer_count ?? '—',
     'Layer height (est.)': p.params?.estimated_layer_height ?? '—',
-    'Notes': p.notes || '—',
+    'Feed range': p.params?.feed_rate_min != null
+      ? `${p.params.feed_rate_min} – ${p.params.feed_rate_max}` : '—',
   };
-  meta.innerHTML = Object.entries(rows)
-    .map(([k, v]) => `<dt>${k}</dt><dd>${v}</dd>`).join('');
+  for (const [k, v] of Object.entries(rows)) {
+    const dt = document.createElement('dt');
+    dt.textContent = k;
+    const dd = document.createElement('dd');
+    dd.textContent = v;
+    meta.append(dt, dd);
+  }
+
+  const form = $('#recordForm');
+  for (const name of ['operator', 'feedstock_batch', 'solids_loading_pct',
+    'nozzle_diameter_mm', 'spiral_spacing_mm', 'print_speed', 'pressure_setting',
+    'notes']) {
+    const el = form.elements[name];
+    if (el) el.value = p[name] ?? '';
+  }
 
   $('#outcomeSelect').value = p.outcome;
   $('#outcomeNotes').value = p.outcome_notes;
@@ -102,11 +193,234 @@ function gcodeBlocks(text) {
 // Small on purpose: the app ships offline as a single exe, so no library.
 // Everything goes through textContent — model output is never parsed as HTML.
 
+// ---------- math ----------
+// A LaTeX subset, rendered with spans and CSS. Enough for the algebra this
+// lab actually writes (flow = W x H x speed x P x S, ratios, exponents,
+// Greek); anything it cannot parse is shown as the original source rather
+// than silently mangled.
+
+const MATH_GREEK = {
+  alpha: 'α', beta: 'β', gamma: 'γ', delta: 'δ', epsilon: 'ε', varepsilon: 'ε',
+  zeta: 'ζ', eta: 'η', theta: 'θ', vartheta: 'ϑ', iota: 'ι', kappa: 'κ',
+  lambda: 'λ', mu: 'μ', nu: 'ν', xi: 'ξ', pi: 'π', rho: 'ρ', sigma: 'σ',
+  tau: 'τ', upsilon: 'υ', phi: 'φ', varphi: 'φ', chi: 'χ', psi: 'ψ', omega: 'ω',
+  Gamma: 'Γ', Delta: 'Δ', Theta: 'Θ', Lambda: 'Λ', Xi: 'Ξ', Pi: 'Π',
+  Sigma: 'Σ', Upsilon: 'Υ', Phi: 'Φ', Psi: 'Ψ', Omega: 'Ω',
+};
+const MATH_SYMBOLS = {
+  times: '×', cdot: '·', div: '÷', pm: '±', mp: '∓', le: '≤', leq: '≤',
+  ge: '≥', geq: '≥', ne: '≠', neq: '≠', approx: '≈', equiv: '≡', propto: '∝',
+  to: '→', rightarrow: '→', leftarrow: '←', Rightarrow: '⇒', leftrightarrow: '↔',
+  infty: '∞', partial: '∂', sum: '∑', prod: '∏', int: '∫', nabla: '∇',
+  ldots: '…', dots: '…', cdots: '⋯', deg: '°', circ: '∘', ll: '≪', gg: '≫',
+  sim: '∼', simeq: '≃', perp: '⊥', angle: '∠', in: '∈', pi_: 'π',
+};
+const MATH_FUNCS = ['sin', 'cos', 'tan', 'log', 'ln', 'exp', 'max', 'min',
+  'lim', 'det', 'dim', 'arg'];
+const MATH_SPACES = { ',': ' ', ':': ' ', ';': ' ', '!': '', ' ': ' ', quad: ' ', qquad: ' ' };
+
+function mathTokens(src) {
+  const out = [];
+  let i = 0;
+  while (i < src.length) {
+    const ch = src[i];
+    if (ch === '\\') {
+      const m = /^\\([A-Za-z]+|[\s\S])/.exec(src.slice(i));
+      if (!m) { i++; continue; }
+      out.push({ t: 'cmd', v: m[1] });
+      i += m[0].length;
+    } else if (ch === '{' || ch === '}' || ch === '^' || ch === '_') {
+      out.push({ t: ch }); i++;
+    } else if (/\s/.test(ch)) {
+      out.push({ t: 'ws' }); i++;
+    } else {
+      out.push({ t: 'ch', v: ch }); i++;
+    }
+  }
+  return out;
+}
+
+// Operators and relations get breathing room on both sides, the way real
+// notation is set — otherwise "W x H" renders as the unreadable "Wx H".
+const MATH_OPERATORS = new Set([
+  '×', '·', '÷', '±', '∓', '≤', '≥', '≠', '≈', '≡', '∝', '→', '←', '⇒', '↔',
+  '∼', '≃', '≪', '≫', '=', '+', '<', '>', '−',
+]);
+
+function mathAtom(ch) {
+  if (!MATH_OPERATORS.has(ch)) return document.createTextNode(ch);
+  const s = document.createElement('span');
+  s.className = 'mbin';
+  s.textContent = ch;
+  return s;
+}
+
+function mathSpan(cls, child) {
+  const s = document.createElement('span');
+  if (cls) s.className = cls;
+  if (child !== undefined) {
+    s.appendChild(typeof child === 'string' ? document.createTextNode(child) : child);
+  }
+  return s;
+}
+
+function mathOperand(toks, i) {
+  while (toks[i] && toks[i].t === 'ws') i++;
+  if (!toks[i]) return { node: document.createDocumentFragment(), next: i };
+  if (toks[i].t === '{') return mathSeq(toks, i + 1, true);
+  const one = mathSeq([toks[i]], 0, false);
+  return { node: one.node, next: i + 1 };
+}
+
+function mathCommand(toks, i) {
+  const name = toks[i].v;
+  i++;
+  if (name === 'frac' || name === 'dfrac' || name === 'tfrac') {
+    const a = mathOperand(toks, i);
+    const b = mathOperand(toks, a.next);
+    const box = mathSpan('mfrac');
+    box.append(mathSpan('mnum', a.node), mathSpan('mden', b.node));
+    return { node: box, next: b.next };
+  }
+  if (name === 'sqrt') {
+    let index = null, j = i;
+    while (toks[j] && toks[j].t === 'ws') j++;
+    if (toks[j] && toks[j].t === 'ch' && toks[j].v === '[') {
+      const buf = [];
+      j++;
+      while (toks[j] && !(toks[j].t === 'ch' && toks[j].v === ']')) { buf.push(toks[j]); j++; }
+      j++;
+      index = mathSeq(buf, 0, false).node;
+    }
+    const a = mathOperand(toks, j);
+    const box = mathSpan('msqrt');
+    if (index) box.appendChild(mathSpan('mroot', index));
+    box.append(mathSpan('mradical', '√'), mathSpan('munder', a.node));
+    return { node: box, next: a.next };
+  }
+  if (name === 'text' || name === 'mathrm' || name === 'mathbf' || name === 'mathit'
+      || name === 'operatorname') {
+    const a = mathOperand(toks, i);
+    const cls = name === 'mathbf' ? 'mupright mbold'
+      : name === 'mathit' ? 'mitalic' : 'mupright';
+    return { node: mathSpan(cls, a.node), next: a.next };
+  }
+  if (name === 'left' || name === 'right' || name === 'big' || name === 'bigl' || name === 'bigr') {
+    let j = i;
+    while (toks[j] && toks[j].t === 'ws') j++;
+    if (toks[j] && toks[j].t === 'ch') {
+      const c = toks[j].v;
+      return { node: document.createTextNode(c === '.' ? '' : c), next: j + 1 };
+    }
+    return { node: document.createDocumentFragment(), next: i };
+  }
+  if (Object.prototype.hasOwnProperty.call(MATH_SPACES, name)) {
+    return { node: document.createTextNode(MATH_SPACES[name]), next: i };
+  }
+  if (MATH_GREEK[name]) return { node: document.createTextNode(MATH_GREEK[name]), next: i };
+  if (MATH_SYMBOLS[name]) return { node: mathAtom(MATH_SYMBOLS[name]), next: i };
+  if (MATH_FUNCS.includes(name)) return { node: mathSpan('mupright', name), next: i };
+  if (/^[%&_${}#]$/.test(name)) return { node: document.createTextNode(name), next: i };
+  // Unknown command: keep it visible as source rather than dropping it.
+  return { node: mathSpan('munknown', '\\' + name), next: i };
+}
+
+function mathSeq(toks, i, untilBrace) {
+  const frag = document.createDocumentFragment();
+  while (i < toks.length) {
+    const tk = toks[i];
+    if (tk.t === '}') {
+      if (untilBrace) return { node: frag, next: i + 1 };
+      i++; continue;
+    }
+    let atom;
+    if (tk.t === 'ws') { frag.appendChild(document.createTextNode(' ')); i++; continue; }
+    if (tk.t === '{') { const g = mathSeq(toks, i + 1, true); atom = mathSpan(null, g.node); i = g.next; }
+    else if (tk.t === 'cmd') { const r = mathCommand(toks, i); atom = r.node; i = r.next; }
+    else if (tk.t === '^' || tk.t === '_') { atom = mathSpan(null); }
+    else {
+      const v = tk.v;
+      atom = /[A-Za-z]/.test(v) ? mathSpan('mvar', v) : mathAtom(v);
+      i++;
+    }
+    // Attach any trailing sub/superscripts to the atom just produced.
+    while (toks[i] && (toks[i].t === '^' || toks[i].t === '_')) {
+      const kind = toks[i].t === '^' ? 'sup' : 'sub';
+      const r = mathOperand(toks, i + 1);
+      const holder = mathSpan('mscripted');
+      holder.appendChild(atom);
+      const sc = document.createElement(kind);
+      sc.appendChild(r.node);
+      holder.appendChild(sc);
+      atom = holder;
+      i = r.next;
+    }
+    frag.appendChild(atom);
+  }
+  return { node: frag, next: i };
+}
+
+function renderMath(src, display) {
+  const wrap = document.createElement(display ? 'div' : 'span');
+  wrap.className = display ? 'math-display' : 'math-inline';
+  try {
+    wrap.appendChild(mathSeq(mathTokens(src), 0, false).node);
+  } catch {
+    wrap.className = 'math-raw';
+    wrap.textContent = src;
+  }
+  return wrap;
+}
+
+// $$..$$ and \[..\] are unambiguous. A single $..$ is ambiguous with prices,
+// so it must look like maths: no whitespace hugging the delimiters, short,
+// and containing either a LaTeX marker or a letter. That accepts $v$,
+// $W = 0.5$ and $F = 900$ while leaving "costs $5 to $10 per part" alone,
+// because its content ("5 to ") ends in a space.
+const MATH_RE = /\$\$([\s\S]+?)\$\$|\\\[([\s\S]+?)\\\]|\\\(([\s\S]+?)\\\)|\$([^$\n]+?)\$/g;
+
+function looksLikeMath(s) {
+  if (/^\s|\s$/.test(s)) return false;
+  if (s.length > 200) return false;
+  return /[\\^_]/.test(s) || /[A-Za-z]/.test(s);
+}
+
+function splitMath(text, onText, onMath) {
+  let last = 0, m;
+  MATH_RE.lastIndex = 0;
+  while ((m = MATH_RE.exec(text)) !== null) {
+    const inline1 = m[4];
+    if (inline1 !== undefined && !looksLikeMath(inline1)) continue;
+    if (m.index > last) onText(text.slice(last, m.index));
+    const display = m[1] !== undefined || m[2] !== undefined;
+    onMath(m[1] ?? m[2] ?? m[3] ?? m[4], display);
+    last = MATH_RE.lastIndex;
+  }
+  if (last < text.length) onText(text.slice(last));
+}
+
 function mdInline(text, parent) {
+  splitMath(text, (chunk) => mdInlineNoMath(chunk, parent),
+    (src, display) => parent.appendChild(renderMath(src, display)));
+}
+
+// The model sometimes drops a bare \Delta or \approx into prose rather than
+// into $..$. Map the ones we know to their symbol so the text reads properly;
+// anything unknown is left exactly as written.
+function symbolise(s) {
+  return s.replace(/\\([A-Za-z]+)/g, (whole, name) =>
+    MATH_GREEK[name] || MATH_SYMBOLS[name] || whole);
+}
+
+function addText(parent, s) {
+  parent.appendChild(document.createTextNode(symbolise(s)));
+}
+
+function mdInlineNoMath(text, parent) {
   const re = /(`+)([\s\S]*?)\1|\*\*([\s\S]+?)\*\*|\*([^*\n]+?)\*|~~([\s\S]+?)~~|\[([^\]]+?)\]\(([^)\s]+?)\)/g;
   let last = 0, m;
   while ((m = re.exec(text)) !== null) {
-    if (m.index > last) parent.appendChild(document.createTextNode(text.slice(last, m.index)));
+    if (m.index > last) addText(parent, text.slice(last, m.index));
     if (m[2] !== undefined) {
       const c = document.createElement('code');
       c.className = 'md-code-inline';
@@ -131,7 +445,7 @@ function mdInline(text, parent) {
     }
     last = re.lastIndex;
   }
-  if (last < text.length) parent.appendChild(document.createTextNode(text.slice(last)));
+  if (last < text.length) addText(parent, text.slice(last));
 }
 
 function mdCodeBlock(lang, code, onCodeBlock) {
@@ -320,7 +634,7 @@ function renderChat(messages) {
 
 $('#backBtn').onclick = () => {
   $('#printDetail').classList.add('hidden');
-  $('#printList').classList.remove('hidden');
+  $('#homeGrid').classList.remove('hidden');
   loadPrints();
 };
 
@@ -813,5 +1127,33 @@ $('#keyUseEnv').onclick = async () => {
 
 $('#keyClose').onclick = () => $('#keyDialog').close();
 
+// Shows which build is actually loaded, so a stale browser cache is obvious
+// at a glance rather than looking like a failed update.
+async function showBuild() {
+  try {
+    const v = await api('/api/version');
+    $('#buildStamp').textContent = v.frozen ? `build ${v.build}` : `dev ${v.build}`;
+  } catch { /* older build with no /api/version — leave it blank */ }
+}
+
+$('#recordForm').onsubmit = async (e) => {
+  e.preventDefault();
+  if (!currentPrint) return;
+  const status = $('#recordStatus');
+  status.textContent = 'Saving…';
+  try {
+    const fd = new FormData(e.target);
+    const p = await api(`/api/prints/${currentPrint.id}/record`,
+      { method: 'POST', body: fd });
+    currentPrint = { ...currentPrint, ...p };
+    status.textContent = 'Saved.';
+  } catch (err) {
+    status.textContent = 'Error: ' + err.message;
+  }
+  setTimeout(() => { status.textContent = ''; }, 4000);
+};
+
+showBuild();
+loadLabNotes();
 loadModels();
 loadPrints();

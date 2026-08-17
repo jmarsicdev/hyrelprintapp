@@ -153,6 +153,48 @@ def main() -> None:
                       .read_text(encoding="utf-8"))
     assert meta["id"] == p5 and meta["params"]["flow_settings_m221"][0]["S"] == 1.1, meta
 
+    # New intake fields survive the round trip, and every record field is
+    # editable afterwards — they used to be settable only at creation, so a
+    # typo was permanent and silently skewed past-case retrieval.
+    r = c.post("/api/prints", files={"gcode_file": ("params.gcode", GCODE)},
+               data={"printer_id": 1, "operator": "ana", "spiral_spacing_mm": "1.25",
+                     "print_speed": "12 mm/s", "pressure_setting": "45 psi",
+                     "solids_loading_pct": "62"})
+    assert r.status_code == 200, r.text
+    pf = r.json()
+    assert pf["spiral_spacing_mm"] == 1.25 and pf["print_speed"] == "12 mm/s", pf
+    assert pf["pressure_setting"] == "45 psi", pf
+
+    r = c.post(f"/api/prints/{pf['id']}/record",
+               data={"solids_loading_pct": "58.5", "print_speed": "9 mm/s",
+                     "notes": "corrected after weighing the batch"})
+    assert r.status_code == 200, r.text
+    upd = r.json()
+    assert upd["solids_loading_pct"] == 58.5 and upd["print_speed"] == "9 mm/s", upd
+    assert upd["notes"] == "corrected after weighing the batch", upd
+    # Fields that were not sent must be left alone.
+    assert upd["operator"] == "ana" and upd["pressure_setting"] == "45 psi", upd
+    # Blanking a number clears it rather than crashing; junk is rejected.
+    assert c.post(f"/api/prints/{pf['id']}/record",
+                  data={"nozzle_diameter_mm": ""}).json()["nozzle_diameter_mm"] is None
+    assert c.post(f"/api/prints/{pf['id']}/record",
+                  data={"solids_loading_pct": "abc"}).status_code == 400
+    assert c.post(f"/api/prints/{pf['id']}/record", data={}).status_code == 400
+    meta_pf = json.loads((pathlib.Path(os.environ["DATA_DIR"]) / "prints" / pf["id"]
+                          / "meta.json").read_text(encoding="utf-8"))
+    assert meta_pf["print_speed"] == "9 mm/s", meta_pf
+
+    # Lab notes are the shared memory across prints: stored as data/LESSONS.md
+    # and pulled into every chat by build_lab_context.
+    assert c.get("/api/lab-notes").json()["text"] == ""
+    LESSON = "Below 60% solids the slurry slumps on walls ≥ 30 mm.\n"
+    assert c.post("/api/lab-notes", data={"text": LESSON}).status_code == 200
+    assert c.get("/api/lab-notes").json()["text"] == LESSON
+    assert LESSON.strip() in build_lab_context(p1, "")
+
+    # The build stamp is what tells a stale browser cache from a stale exe.
+    assert c.get("/api/version").json()["build"], "build id must not be empty"
+
     # The phone-upload path is gone on purpose: it was the only reason to bind
     # to the LAN, and nothing here is authenticated. Keep it gone.
     assert c.get(f"/api/prints/{p1}/qr").status_code == 404

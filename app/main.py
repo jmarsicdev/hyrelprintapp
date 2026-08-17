@@ -4,7 +4,7 @@ import json
 import secrets
 from datetime import datetime
 
-from fastapi import FastAPI, File, Form, HTTPException, UploadFile
+from fastapi import FastAPI, File, Form, HTTPException, Request, UploadFile
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from PIL import Image
@@ -12,7 +12,8 @@ from PIL import Image
 from . import ai, db, gcode
 from pathlib import Path, PurePosixPath
 
-from .config import DATA_DIR, DEFAULT_PRINTER, GCODE_DIR, PRINTS_DIR, STATIC_DIR
+from .config import (BUILD_ID, DATA_DIR, DEFAULT_PRINTER, FROZEN, GCODE_DIR,
+                     PRINTS_DIR, STATIC_DIR)
 
 app = FastAPI(title="Hyrel Print Assistant")
 
@@ -157,6 +158,9 @@ async def create_print(
     feedstock_batch: str = Form(""),
     solids_loading_pct: float | None = Form(None),
     nozzle_diameter_mm: float | None = Form(None),
+    spiral_spacing_mm: float | None = Form(None),
+    print_speed: str = Form(""),
+    pressure_setting: str = Form(""),
     notes: str = Form(""),
 ):
     src = None
@@ -182,11 +186,13 @@ async def create_print(
         conn.execute(
             """INSERT INTO prints (id, printer_id, created_at, operator, gcode_filename,
                    gcode_sha256, gcode_source_path, params_json, feedstock_batch,
-                   solids_loading_pct, nozzle_diameter_mm, notes)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                   solids_loading_pct, nozzle_diameter_mm, spiral_spacing_mm,
+                   print_speed, pressure_setting, notes)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (print_id, printer_id, db.utcnow(), operator, filename, sha,
              str(src) if src else "", json.dumps(params), feedstock_batch,
-             solids_loading_pct, nozzle_diameter_mm, notes),
+             solids_loading_pct, nozzle_diameter_mm, spiral_spacing_mm,
+             print_speed, pressure_setting, notes),
         )
     write_meta(print_id)
     return get_print(print_id)
@@ -287,6 +293,70 @@ def set_notes(print_id: str, notes: str = Form("")):
         conn.execute("UPDATE prints SET notes = ? WHERE id = ?", (notes, print_id))
     write_meta(print_id)
     return {"ok": True}
+
+
+# Editable after the fact: these used to be settable only at creation, so a
+# mistyped solids % was stuck forever — and it silently degraded past-case
+# retrieval, which reads that column.
+EDITABLE_FIELDS = {
+    "operator": str, "feedstock_batch": str, "print_speed": str,
+    "pressure_setting": str, "notes": str,
+    "solids_loading_pct": float, "nozzle_diameter_mm": float,
+    "spiral_spacing_mm": float,
+}
+
+
+@app.post("/api/prints/{print_id}/record")
+async def update_record(print_id: str, request: Request):
+    """Update any subset of the record fields. Only keys actually sent are
+    touched, so two people editing different fields don't clobber each other."""
+    get_print(print_id)
+    form = await request.form()
+    sets, values = [], []
+    for key, caster in EDITABLE_FIELDS.items():
+        if key not in form:
+            continue
+        raw = str(form[key]).strip()
+        if caster is float:
+            if raw == "":
+                value = None
+            else:
+                try:
+                    value = float(raw)
+                except ValueError:
+                    raise HTTPException(400, f"{key} must be a number")
+        else:
+            value = raw
+        sets.append(f"{key} = ?")
+        values.append(value)
+    if not sets:
+        raise HTTPException(400, "no editable fields supplied")
+    with db.connect() as conn:
+        conn.execute(f"UPDATE prints SET {', '.join(sets)} WHERE id = ?",
+                     (*values, print_id))
+    write_meta(print_id)
+    return get_print(print_id)
+
+
+# ---------- lab notes (shared across every print) ----------
+
+LAB_NOTES = "LESSONS.md"
+
+
+@app.get("/api/lab-notes")
+def get_lab_notes():
+    """The lab's own notes. Included verbatim in every chat, so this is the
+    shared memory across prints rather than a private scratchpad."""
+    path = DATA_DIR / LAB_NOTES
+    text = path.read_text(encoding="utf-8", errors="replace") if path.exists() else ""
+    return {"text": text}
+
+
+@app.post("/api/lab-notes")
+def set_lab_notes(text: str = Form("")):
+    DATA_DIR.mkdir(parents=True, exist_ok=True)
+    (DATA_DIR / LAB_NOTES).write_text(text, encoding="utf-8")
+    return {"ok": True, "chars": len(text)}
 
 
 @app.post("/api/prints/{print_id}/fields")
@@ -475,10 +545,30 @@ def chat(print_id: str, message: str = Form(...), include_photos: bool = Form(Tr
     return {"reply": reply}
 
 
+@app.get("/api/version")
+def version():
+    """Which build is actually running — the fastest way to tell a stale
+    browser cache from a stale exe."""
+    return {"build": BUILD_ID, "frozen": FROZEN}
+
+
 # Photos come from the PC itself: "Capture from camera" (any UVC webcam or USB
 # microscope, and a Canon via EOS Webcam Utility) or "Import files" off the
 # card. There is deliberately no phone-upload path — it was the only reason to
 # listen on the LAN, and nothing here is authenticated, so the app now binds to
 # localhost only (see HOST in config.py).
 
-app.mount("/", StaticFiles(directory=STATIC_DIR, html=True), name="static")
+
+class FreshStatic(StaticFiles):
+    """Always revalidate. Without this the browser has no Cache-Control to go
+    on, applies heuristic freshness, and happily keeps serving the previous
+    build's app.js after an update — which looks exactly like the update
+    having failed. The ETag still makes the revalidation a cheap 304."""
+
+    def file_response(self, *args, **kwargs):
+        resp = super().file_response(*args, **kwargs)
+        resp.headers["Cache-Control"] = "no-cache, must-revalidate"
+        return resp
+
+
+app.mount("/", FreshStatic(directory=STATIC_DIR, html=True), name="static")

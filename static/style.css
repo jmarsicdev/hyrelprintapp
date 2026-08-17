@@ -11,9 +11,11 @@ header {
   padding: .7rem 1.2rem; background: #1c2430; color: #fff;
 }
 header h1 { font-size: 1.1rem; margin: 0; }
-main { padding: 1rem; max-width: 1200px; margin: 0 auto; }
+/* Fill the window: these screens are read side by side on a lab monitor. */
+main { padding: 1rem 1.4rem; max-width: none; margin: 0; }
 .panel { background: var(--panel); border: 1px solid var(--border); border-radius: 8px; padding: 1rem; }
 .hidden { display: none !important; }
+.build-stamp { font-size: .68rem; font-weight: 400; opacity: .65; margin-left: .5rem; white-space: nowrap; }
 button {
   background: var(--accent); color: #fff; border: 0; border-radius: 6px;
   padding: .45rem .9rem; cursor: pointer; font-size: .9rem;
@@ -40,8 +42,50 @@ tbody tr:hover { background: #eef2ff; }
 }
 .chip.on { background: var(--accent); color: #fff; border-color: var(--accent); }
 
-.detail-grid { display: grid; grid-template-columns: 1fr 1.2fr; gap: 1.5rem; }
-@media (max-width: 900px) { .detail-grid { grid-template-columns: 1fr; } }
+.detail-grid { display: grid; grid-template-columns: minmax(24rem, 1fr) minmax(30rem, 1.35fr); gap: 1.5rem; }
+@media (max-width: 1100px) { .detail-grid { grid-template-columns: 1fr; } }
+
+/* Home screen: prints on the left, notes alongside them on the right. */
+.home-grid { display: grid; grid-template-columns: minmax(0, 1fr) minmax(20rem, 26rem); gap: 1.2rem; align-items: start; }
+@media (max-width: 1100px) { .home-grid { grid-template-columns: 1fr; } }
+.notes-panel h2 { margin-top: 0; }
+.notes-sub { font-size: .78rem; color: #64748b; margin: 0 0 .35rem; }
+#labNotes {
+  width: 100%; min-height: 8.5rem; resize: vertical; padding: .55rem .6rem;
+  border: 1px solid var(--border); border-radius: 6px; font: inherit;
+  font-size: .86rem; line-height: 1.5;
+}
+.notes-actions { display: flex; align-items: center; gap: .5rem; margin: .4rem 0 1.1rem; }
+.notes-actions .hint { margin: 0; }
+#printNotesList { max-height: 30rem; overflow-y: auto; }
+.note-card {
+  border: 1px solid var(--border); border-radius: 6px; padding: .5rem .6rem;
+  margin-bottom: .5rem; cursor: pointer; background: #fbfcfd;
+}
+.note-card:hover { background: #eef2ff; }
+.note-card .note-head { display: flex; justify-content: space-between; gap: .5rem; font-size: .76rem; color: #64748b; }
+.note-card .note-body { font-size: .85rem; line-height: 1.45; margin-top: .25rem; white-space: pre-wrap; }
+.note-card .note-outcome { font-size: .8rem; margin-top: .3rem; color: #334155; }
+
+.record-form { margin: .6rem 0 1rem; }
+.record-fields {
+  display: grid; grid-template-columns: repeat(auto-fit, minmax(11rem, 1fr));
+  gap: .4rem .8rem;
+}
+.record-fields label, .notes-label {
+  display: block; font-size: .78rem; font-weight: 600; color: #475569;
+}
+.record-fields input {
+  width: 100%; padding: .35rem .45rem; margin-top: .15rem; font: inherit;
+  font-size: .85rem; font-weight: 400;
+  border: 1px solid var(--border); border-radius: 6px;
+}
+.notes-label { margin-top: .7rem; }
+#recordNotes {
+  width: 100%; margin-top: .2rem; padding: .55rem .6rem; resize: vertical;
+  font: inherit; font-size: .88rem; font-weight: 400; line-height: 1.55;
+  border: 1px solid var(--border); border-radius: 6px; min-height: 11rem;
+}
 
 dl { display: grid; grid-template-columns: auto 1fr; gap: .2rem .8rem; font-size: .9rem; }
 dt { font-weight: 600; color: #475569; }
@@ -110,6 +154,38 @@ h5.md-h, h6.md-h { font-size: .93rem; color: #475569; }
 .codelang { font-size: .72rem; text-transform: uppercase; letter-spacing: .04em; color: #64748b; }
 .codebar button { margin-left: auto; font-size: .75rem; padding: .2rem .55rem; }
 .codecopy { background: #64748b; }
+/* math */
+.math-inline, .math-display {
+  font-family: "Cambria Math", "Latin Modern Math", Georgia, serif;
+  font-size: 1.04em; line-height: 1.35;
+}
+.math-display {
+  display: block; text-align: center; margin: .8rem 0; font-size: 1.12em;
+  overflow-x: auto; padding: .2rem 0;
+}
+.math-raw, .munknown {
+  font-family: ui-monospace, Consolas, monospace; font-size: .85em; color: #b45309;
+}
+.mvar { font-style: italic; }
+.mbin { margin: 0 .24em; }
+.mfrac .mbin { margin: 0 .16em; }
+.mupright { font-style: normal; }
+.mbold { font-weight: 700; }
+.mitalic { font-style: italic; }
+.mscripted { position: relative; }
+.math-inline sup, .math-display sup { font-size: .72em; vertical-align: .45em; line-height: 0; }
+.math-inline sub, .math-display sub { font-size: .72em; vertical-align: -.28em; line-height: 0; }
+.mfrac {
+  display: inline-flex; flex-direction: column; vertical-align: middle;
+  text-align: center; margin: 0 .18em;
+}
+.mnum { padding: 0 .3em; border-bottom: 1px solid currentColor; }
+.mden { padding: 0 .3em; }
+.msqrt { display: inline-flex; align-items: flex-start; }
+.mradical { margin-right: -.05em; }
+.mroot { font-size: .65em; vertical-align: .6em; margin-right: -.35em; }
+.munder { border-top: 1px solid currentColor; padding: 0 .18em; }
+
 .codeblock pre { margin: 0; padding: .6rem .7rem; overflow-x: auto; }
 .codeblock code {
   font-family: ui-monospace, "Cascadia Mono", Consolas, monospace;

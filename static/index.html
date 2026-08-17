@@ -8,7 +8,7 @@
 </head>
 <body>
 <header>
-  <h1>Hyrel Print Assistant</h1>
+  <h1>Hyrel Print Assistant <span id="buildStamp" class="build-stamp"></span></h1>
   <div>
     <button id="keyBtn" class="secondary">API key</button>
     <button id="newPrintBtn">+ New print</button>
@@ -16,13 +16,27 @@
 </header>
 
 <main>
-  <section id="printList" class="panel">
-    <h2>Prints</h2>
-    <table id="printsTable">
-      <thead><tr><th>ID</th><th>Date</th><th>Printer</th><th>Operator</th><th>Outcome</th><th>Photos</th></tr></thead>
-      <tbody></tbody>
-    </table>
-  </section>
+  <div id="homeGrid" class="home-grid">
+    <section id="printList" class="panel">
+      <h2>Prints</h2>
+      <table id="printsTable">
+        <thead><tr><th>ID</th><th>Date</th><th>Printer</th><th>Operator</th><th>Outcome</th><th>Photos</th></tr></thead>
+        <tbody></tbody>
+      </table>
+    </section>
+
+    <section id="notesColumn" class="panel notes-panel">
+      <h2>Notes</h2>
+      <p class="notes-sub">Lab notes — included in <em>every</em> chat, on every print.</p>
+      <textarea id="labNotes" placeholder="Rules of thumb worth remembering, e.g. below 60% solids the slurry slumps on walls over 30 mm…"></textarea>
+      <div class="notes-actions">
+        <button type="button" id="saveLabNotes">Save lab notes</button>
+        <span id="labNotesStatus" class="hint"></span>
+      </div>
+      <p class="notes-sub">Notes from each print — click one to open it.</p>
+      <div id="printNotesList"></div>
+    </section>
+  </div>
 
   <section id="printDetail" class="panel hidden">
     <button id="backBtn">&larr; All prints</button>
@@ -31,6 +45,25 @@
       <div>
         <h3>Record</h3>
         <dl id="detailMeta"></dl>
+        <form id="recordForm" class="record-form">
+          <div class="record-fields">
+            <label>Operator <input name="operator"></label>
+            <label>Feedstock batch <input name="feedstock_batch"></label>
+            <label>Solids loading % <input name="solids_loading_pct" type="number" step="0.1"></label>
+            <label>Nozzle Ø (mm) <input name="nozzle_diameter_mm" type="number" step="0.01"></label>
+            <label>Spiral spacing (mm) <input name="spiral_spacing_mm" type="number" step="0.01"></label>
+            <label>Print speed <input name="print_speed" placeholder="e.g. 12 mm/s"></label>
+            <label>Pressure setting <input name="pressure_setting" placeholder="e.g. 45 psi"></label>
+          </div>
+          <label class="notes-label">Notes
+            <textarea name="notes" id="recordNotes" rows="10"
+              placeholder="Observations, head-dialog values you set in Repetrel, anything the G-code does not capture…"></textarea>
+          </label>
+          <div class="notes-actions">
+            <button type="submit">Save record</button>
+            <span id="recordStatus" class="hint"></span>
+          </div>
+        </form>
         <div class="outcome-row">
           <label>Outcome:</label>
           <select id="outcomeSelect">
@@ -137,7 +170,10 @@
       <label>Feedstock batch <input name="feedstock_batch" placeholder="e.g. B12 2026-08-01"></label>
       <label>Solids loading % <input name="solids_loading_pct" type="number" step="0.1"></label>
       <label>Nozzle Ø (mm) <input name="nozzle_diameter_mm" type="number" step="0.01"></label>
-      <label>Notes <textarea name="notes" rows="2" placeholder="anything unusual before/at start"></textarea></label>
+      <label>Spiral spacing (mm) <input name="spiral_spacing_mm" type="number" step="0.01"></label>
+      <label>Print speed <input name="print_speed" placeholder="e.g. 12 mm/s, or 'slow perimeter'"></label>
+      <label>Pressure setting <input name="pressure_setting" placeholder="e.g. 45 psi, or dial 3.5"></label>
+      <label>Notes <textarea name="notes" rows="4" placeholder="anything unusual before/at start — head-dialog values you changed in Repetrel belong here"></textarea></label>
       <div class="dialog-buttons">
         <button type="button" id="cancelNew">Cancel</button>
         <button type="submit">Create</button>

@@ -34,4 +34,22 @@ GCODE_DIR = Path(_gcode_dir).resolve() if _gcode_dir else None
 PRINTS_DIR = DATA_DIR / "prints"
 DB_PATH = DATA_DIR / "printlog.sqlite3"
 
+
+def _build_id() -> str:
+    """A visible stamp for "which build am I looking at". The exe's own
+    timestamp when frozen; the newest source file when running from source."""
+    from datetime import datetime
+    try:
+        if FROZEN:
+            newest = Path(sys.executable).stat().st_mtime
+        else:
+            files = [*(ROOT / "app").glob("*.py"), *(ROOT / "static").iterdir()]
+            newest = max(f.stat().st_mtime for f in files if f.is_file())
+        return datetime.fromtimestamp(newest).strftime("%Y-%m-%d %H:%M")
+    except (OSError, ValueError):
+        return "unknown"
+
+
+BUILD_ID = _build_id()
+
 PRINTS_DIR.mkdir(parents=True, exist_ok=True)

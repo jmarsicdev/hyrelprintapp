@@ -1,0 +1,16 @@
+{
+  "name": "readable-api-errors",
+  "version": "1.0.0",
+  "description": "A small local web app that runs on the Windows PC driving the lab's Hyrel\r ceramic paste-extrusion printer. It does two jobs at once:",
+  "main": "visual_test.js",
+  "scripts": {
+    "visual-test": "node visual_test.js"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs",
+  "devDependencies": {
+    "playwright": "^1.62.1"
+  }
+}
