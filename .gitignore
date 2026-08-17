@@ -3,3 +3,16 @@
 data/
 __pycache__/
 *.pyc
+# build_exe.bat output (dist/HyrelAssistant.exe is ~26 MB — ship it, don't commit it)
+.buildvenv/
+build/
+dist/
+*.spec
+# test scratch dirs
+data-smoketest/
+gcode-smoketest/
+data-visualtest/
+gcode-visualtest/
+# visual_test.js (headless browser checks)
+node_modules/
+screenshots/

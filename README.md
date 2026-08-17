@@ -13,8 +13,13 @@ ceramic paste-extrusion printer. It does two jobs at once:
    full chat transcript. Specimens labeled with the print ID can later be
    joined to CSI scans — the provenance layer for the metrology lab's ML work.
 
-No flash drives: students use the printer PC directly, and phones upload
-photos over the lab LAN by scanning a QR code.
+No flash drives: students work on the printer PC directly, and photos come
+from a camera attached to that PC.
+
+The app listens on **localhost only** and has no login. That is deliberate:
+every endpoint is unauthenticated, so exposing the port would let anyone on
+the lab network read every print, write gcode into `C:\RepetrelProjects`, or
+spend the lab's API credits. Don't change `HOST` in `.env`.
 
 ## Setup on the Hyrel PC — easiest path (single EXE)
 
@@ -33,8 +38,8 @@ The Hyrel PC needs **no Python and no dev tools**:
    just try the chat — a missing key or blocked network produces a clear
    error message in the chat window).
 
-Windows Firewall will prompt on first run — choose "Allow" so phones on the
-lab network can reach the QR photo-upload page.
+Windows Firewall should not prompt at all — the app binds to localhost. If it
+does prompt, "Cancel" is the safe answer; the app still works.
 
 ## Setup from source (alternative)
 
@@ -52,31 +57,37 @@ API, and none is needed):
 - **In**: the new-print dialog lists recent `.gcode` files straight from
   `C:\RepetrelProjects` (configurable via `GCODE_DIR` in `.env`) — pick one
   from the list; plain file upload remains as a fallback.
-- **Out**: when the AI proposes an edit and you click *Save revision*, the
-  file is written **next to the original** as `<name>_rev01.gcode` (and also
-  archived in the print's data folder). In Repetrel it's one File > Open
-  away, in the folder students already use. **The original file is never
-  modified.**
+- **Out**: when the AI proposes G-code, a **Review** button appears on that
+  message. It opens a diff against the original — added and removed lines,
+  monospaced, long unchanged stretches collapsed — plus where the file will be
+  written, and a warning if the proposal looks like an excerpt rather than a
+  complete file. Nothing is written until you approve it. On save the file
+  goes **next to the original** as `<name>_rev01.gcode` (and is archived in
+  the print's data folder). In Repetrel it's one File > Open away, in the
+  folder students already use. **The original file is never modified.**
 - The AI knows Hyrel's locked-vs-editable rules: it won't touch the
   mandatory header lines (reporting/abort/homing), treats machine-specific
   values (M660, M140) as deliberate hand edits only, and warns when a file
   edit to M721/M722/M221 would be overridden by the Repetrel head dialogs.
 
-## Photos: phones, webcams, USB microscope, Canon
+## Photos: webcams, USB microscope, Canon
 
-- **Phone**: scan the print's QR code; upload straight from the phone camera.
 - **USB microscope / any webcam**: click **Capture from camera** on a print —
   a device picker + live preview appears in the browser (works for any UVC
   camera, which covers virtually all USB microscopes; no drivers needed).
 - **Canon camera**: two options. Install Canon **EOS Webcam Utility** and the
   Canon appears in the same Capture picker; or shoot normally and use
   **Import files** (multi-select) to pull images off the card/USB.
-- Every photo records its **source** (`phone`, `import`,
-  `capture:<device name>`) — imaging modality is part of the dataset.
+- Every photo records its **source** (`import`, `capture:<device name>`) —
+  imaging modality is part of the dataset.
 
-Phones must be on the same network as the PC for QR photo upload, and Windows
-Firewall must allow inbound connections to Python on port 8137 (Windows will
-prompt on first run — choose "Allow").
+Reach the app as **http://localhost:8137**, not by IP address. Browsers only
+grant camera access to `localhost` (or HTTPS), so **Capture from camera** is
+silently unavailable over any other address.
+
+There is no phone-upload path. Adding one back means exposing an
+unauthenticated API to the lab network, so it would need real authentication
+first — see the note at the top.
 
 ### API key recommendation
 
@@ -168,10 +179,40 @@ looks like at this scale:
 - Machines ship with an always-admin Windows user named `Hyrel` and require
   English system locale — don't change either.
 
+## Open: verify on the printer PC
+
+Nothing below is known-broken — none of it can be settled off the machine.
+
+1. **Revisions only reach the Repetrel folder for folder-sourced prints.**
+   `save_revision` writes `<name>_revNN.gcode` next to the original only when
+   the record carries a `gcode_source_path` inside `GCODE_DIR`. Create the
+   print with the **G-code from printer folder** dropdown and it round-trips;
+   create it with the **G-code file** upload box and `repetrel_path` comes
+   back `null`, so the revision exists only in `data/prints/<id>/` and has to
+   be fetched by hand. Both inputs sit in the same dialog and look equally
+   valid, which is the trap — confirmed by test, not yet seen on real
+   Repetrel data. Worth deciding whether upload should be de-emphasised, or
+   whether an uploaded file should be copied into `GCODE_DIR` so revisions
+   land somewhere useful either way. The post-save alert does distinguish the
+   two cases, but only after the write.
+2. **Is `C:\RepetrelProjects` the real path, and is it writable** by the
+   account running the app? The `Hyrel` user is always-admin, so this is
+   expected to be fine — just unconfirmed.
+3. **Does the file list stay usable** against a real project tree? The picker
+   walks `GCODE_DIR` recursively on every call and shows the 100 most recent
+   `.gcode`/`.gc`/`.nc` files; that has only been tested on a toy folder.
+4. **Do real Repetrel files parse as expected** — `app/gcode.py` was written
+   against the wiki and a hand-made sample, so check `meta.json` on a first
+   real print for sane M221/M721/M722 values and layer count.
+
 ## Development
 
 ```
 python -m venv .venv && . .venv/bin/activate
 pip install -r requirements.txt
 uvicorn app.main:app --reload --port 8137
+
+python smoke_test.py     # offline; no API calls
+node test_diff.js        # revision-diff logic     (optional, needs node)
+node test_markdown.js    # chat markdown rendering (optional, needs node)
 ```

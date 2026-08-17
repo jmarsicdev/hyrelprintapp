@@ -25,6 +25,9 @@ CREATE TABLE IF NOT EXISTS prints (
     feedstock_batch TEXT DEFAULT '',
     solids_loading_pct REAL,
     nozzle_diameter_mm REAL,
+    spiral_spacing_mm REAL,
+    print_speed TEXT DEFAULT '',
+    pressure_setting TEXT DEFAULT '',
     notes TEXT DEFAULT '',
     outcome TEXT DEFAULT 'unknown',
     outcome_notes TEXT DEFAULT '',
@@ -83,6 +86,9 @@ def init() -> None:
             "ALTER TABLE prints ADD COLUMN custom_json TEXT DEFAULT '{}'",
             "ALTER TABLE photos ADD COLUMN source TEXT DEFAULT ''",
             "ALTER TABLE prints ADD COLUMN gcode_source_path TEXT DEFAULT ''",
+            "ALTER TABLE prints ADD COLUMN spiral_spacing_mm REAL",
+            "ALTER TABLE prints ADD COLUMN print_speed TEXT DEFAULT ''",
+            "ALTER TABLE prints ADD COLUMN pressure_setting TEXT DEFAULT ''",
         ):
             try:
                 conn.execute(stmt)

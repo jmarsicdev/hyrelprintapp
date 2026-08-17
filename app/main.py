@@ -1,20 +1,20 @@
 import hashlib
 import io
 import json
+import math
 import secrets
-import socket
 from datetime import datetime
 
-from fastapi import FastAPI, File, Form, HTTPException, UploadFile
-from fastapi.responses import FileResponse, HTMLResponse, Response
+from fastapi import FastAPI, File, Form, HTTPException, Request, UploadFile
+from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from PIL import Image
-import qrcode
 
 from . import ai, db, gcode
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 
-from .config import DATA_DIR, DEFAULT_PRINTER, GCODE_DIR, PORT, PRINTS_DIR, STATIC_DIR
+from .config import (BUILD_ID, DATA_DIR, DEFAULT_PRINTER, FROZEN, GCODE_DIR,
+                     PRINTS_DIR, STATIC_DIR)
 
 app = FastAPI(title="Hyrel Print Assistant")
 
@@ -35,6 +35,41 @@ def print_dir(print_id: str):
     d = PRINTS_DIR / print_id
     (d / "photos").mkdir(parents=True, exist_ok=True)
     return d
+
+
+def finite(raw, field: str) -> float | None:
+    """Reject inf/nan before they reach the database. JSON has no way to
+    represent them, so a single "1e400" would make every later read of the
+    prints list fail with a 500 — permanently, since the row is already
+    committed — and would write bare Infinity into meta.json."""
+    if raw is None or raw == "":
+        return None
+    try:
+        value = float(raw)
+    except (TypeError, ValueError):
+        raise HTTPException(400, f"{field} must be a number")
+    if not math.isfinite(value):
+        raise HTTPException(400, f"{field} must be a finite number")
+    return value
+
+
+def safe_name(name: str, fallback: str = "upload.gcode") -> str:
+    """Reduce a client-supplied filename to a bare name. Multipart filenames
+    are attacker-controlled and any page in any browser tab on this PC can
+    POST here, so a name like ../../x must not escape the print folder."""
+    base = PurePosixPath(str(name).replace("\\", "/")).name.replace("\x00", "").strip()
+    return base[:120] if base and base not in (".", "..") else fallback
+
+
+def print_file(print_id: str, filename: str, sub: str = "") -> Path | None:
+    """A file inside this print's folder, or None if the name escapes it.
+    Also covers records written before names were sanitised."""
+    base = (print_dir(print_id) / sub).resolve()
+    try:
+        target = (base / filename).resolve()
+    except (OSError, ValueError):
+        return None
+    return target if target.is_relative_to(base) and target.is_file() else None
 
 
 def get_print(print_id: str) -> dict:
@@ -58,7 +93,8 @@ def write_meta(print_id: str) -> None:
             "SELECT name, make, model FROM printers WHERE id = ?", (p["printer_id"],)).fetchone()
     p["photos"] = photos
     p["printer"] = dict(printer) if printer else None
-    (print_dir(print_id) / "meta.json").write_text(json.dumps(p, indent=2))
+    (print_dir(print_id) / "meta.json").write_text(
+        json.dumps(p, indent=2, ensure_ascii=False), encoding="utf-8")
 
 
 # ---------- printers ----------
@@ -97,18 +133,26 @@ def list_gcode_files():
     file directly instead of hunting through an OS file dialog."""
     if GCODE_DIR is None or not GCODE_DIR.exists():
         return {"available": False, "root": None, "files": []}
+    # stat() once per file, tolerating files that vanish mid-scan — Repetrel
+    # and the slicer write into this folder while we are listing it, and an
+    # unhandled error here would break the whole new-print dialog.
     found = []
     for pattern in ("*.gcode", "*.gc", "*.nc"):
-        found.extend(GCODE_DIR.rglob(pattern))
-    found.sort(key=lambda f: f.stat().st_mtime, reverse=True)
+        for f in GCODE_DIR.rglob(pattern):
+            try:
+                st = f.stat()
+            except OSError:
+                continue
+            found.append((st.st_mtime, st.st_size, f))
+    found.sort(key=lambda t: t[0], reverse=True)
     return {
         "available": True,
         "root": str(GCODE_DIR),
         "files": [
             {"path": str(f.relative_to(GCODE_DIR)),
-             "mtime": datetime.fromtimestamp(f.stat().st_mtime).isoformat(timespec="minutes"),
-             "size": f.stat().st_size}
-            for f in found[:100]
+             "mtime": datetime.fromtimestamp(mtime).isoformat(timespec="minutes"),
+             "size": size}
+            for mtime, size, f in found[:100]
         ],
     }
 
@@ -131,6 +175,9 @@ async def create_print(
     feedstock_batch: str = Form(""),
     solids_loading_pct: float | None = Form(None),
     nozzle_diameter_mm: float | None = Form(None),
+    spiral_spacing_mm: float | None = Form(None),
+    print_speed: str = Form(""),
+    pressure_setting: str = Form(""),
     notes: str = Form(""),
 ):
     src = None
@@ -140,7 +187,7 @@ async def create_print(
         filename = src.name
     elif gcode_file is not None and gcode_file.filename:
         raw = await gcode_file.read()
-        filename = gcode_file.filename
+        filename = safe_name(gcode_file.filename)
     else:
         raise HTTPException(400, "provide a gcode file or a source_path")
 
@@ -156,11 +203,15 @@ async def create_print(
         conn.execute(
             """INSERT INTO prints (id, printer_id, created_at, operator, gcode_filename,
                    gcode_sha256, gcode_source_path, params_json, feedstock_batch,
-                   solids_loading_pct, nozzle_diameter_mm, notes)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                   solids_loading_pct, nozzle_diameter_mm, spiral_spacing_mm,
+                   print_speed, pressure_setting, notes)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (print_id, printer_id, db.utcnow(), operator, filename, sha,
              str(src) if src else "", json.dumps(params), feedstock_batch,
-             solids_loading_pct, nozzle_diameter_mm, notes),
+             finite(solids_loading_pct, "solids_loading_pct"),
+             finite(nozzle_diameter_mm, "nozzle_diameter_mm"),
+             finite(spiral_spacing_mm, "spiral_spacing_mm"),
+             print_speed, pressure_setting, notes),
         )
     write_meta(print_id)
     return get_print(print_id)
@@ -263,6 +314,64 @@ def set_notes(print_id: str, notes: str = Form("")):
     return {"ok": True}
 
 
+# Editable after the fact: these used to be settable only at creation, so a
+# mistyped solids % was stuck forever — and it silently degraded past-case
+# retrieval, which reads that column.
+EDITABLE_FIELDS = {
+    "operator": str, "feedstock_batch": str, "print_speed": str,
+    "pressure_setting": str, "notes": str,
+    "solids_loading_pct": float, "nozzle_diameter_mm": float,
+    "spiral_spacing_mm": float,
+}
+
+
+@app.post("/api/prints/{print_id}/record")
+async def update_record(print_id: str, request: Request):
+    """Update any subset of the record fields. Only keys actually sent are
+    touched, so two people editing different fields don't clobber each other."""
+    get_print(print_id)
+    form = await request.form()
+    sets, values = [], []
+    for key, caster in EDITABLE_FIELDS.items():
+        if key not in form:
+            continue
+        raw = str(form[key]).strip()
+        if caster is float:
+            value = None if raw == "" else finite(raw, key)
+        else:
+            value = raw
+        sets.append(f"{key} = ?")
+        values.append(value)
+    if not sets:
+        raise HTTPException(400, "no editable fields supplied")
+    with db.connect() as conn:
+        conn.execute(f"UPDATE prints SET {', '.join(sets)} WHERE id = ?",
+                     (*values, print_id))
+    write_meta(print_id)
+    return get_print(print_id)
+
+
+# ---------- lab notes (shared across every print) ----------
+
+LAB_NOTES = "LESSONS.md"
+
+
+@app.get("/api/lab-notes")
+def get_lab_notes():
+    """The lab's own notes. Included verbatim in every chat, so this is the
+    shared memory across prints rather than a private scratchpad."""
+    path = DATA_DIR / LAB_NOTES
+    text = path.read_text(encoding="utf-8", errors="replace") if path.exists() else ""
+    return {"text": text}
+
+
+@app.post("/api/lab-notes")
+def set_lab_notes(text: str = Form("")):
+    DATA_DIR.mkdir(parents=True, exist_ok=True)
+    (DATA_DIR / LAB_NOTES).write_text(text, encoding="utf-8")
+    return {"ok": True, "chars": len(text)}
+
+
 @app.post("/api/prints/{print_id}/fields")
 async def set_custom_fields(print_id: str, fields_json: str = Form(...)):
     """Replace the print's custom key/value fields (free-form dataset columns
@@ -284,10 +393,10 @@ async def set_custom_fields(print_id: str, fields_json: str = Form(...)):
 @app.get("/api/prints/{print_id}/gcode")
 def download_gcode(print_id: str):
     p = get_print(print_id)
-    path = PRINTS_DIR / print_id / p["gcode_filename"]
-    if not path.exists():
+    path = print_file(print_id, p["gcode_filename"])
+    if path is None:
         raise HTTPException(404, "gcode file missing")
-    return FileResponse(path, filename=p["gcode_filename"])
+    return FileResponse(path, filename=path.name)
 
 
 @app.post("/api/prints/{print_id}/revisions")
@@ -300,15 +409,24 @@ def save_revision(print_id: str, content: str = Form(...)):
     d = print_dir(print_id)
     n = 1 + sum(1 for f in d.glob("revision_*.gcode"))
     path = d / f"revision_{n:02d}.gcode"
-    path.write_text(content)
+    # UTF-8 explicitly: the model writes µ, Ø, →, ≈ in comments, and the
+    # Windows default (cp1252) cannot encode several of them.
+    path.write_text(content, encoding="utf-8")
 
     repetrel_path = None
     src = p.get("gcode_source_path")
     if src and GCODE_DIR is not None:
         sp = Path(src)
         if sp.is_relative_to(GCODE_DIR) and sp.parent.is_dir():
-            target = sp.parent / f"{sp.stem}_rev{n:02d}.gcode"
-            target.write_text(content)
+            # Never overwrite: two print records made from the same original
+            # would otherwise both claim <name>_rev01.gcode, and the second
+            # save would silently replace the first student's file.
+            k = n
+            target = sp.parent / f"{sp.stem}_rev{k:02d}.gcode"
+            while target.exists():
+                k += 1
+                target = sp.parent / f"{sp.stem}_rev{k:02d}.gcode"
+            target.write_text(content, encoding="utf-8")
             repetrel_path = str(target)
 
     return {"filename": path.name, "repetrel_path": repetrel_path}
@@ -346,8 +464,8 @@ async def upload_photo(print_id: str, file: UploadFile = File(...), caption: str
 
 @app.get("/api/prints/{print_id}/photos/{filename}")
 def get_photo(print_id: str, filename: str):
-    path = print_dir(print_id) / "photos" / filename
-    if ".." in filename or not path.exists():
+    path = print_file(print_id, filename, "photos")
+    if path is None:
         raise HTTPException(404)
     return FileResponse(path)
 
@@ -363,7 +481,7 @@ def build_lab_context(print_id: str, tags: str) -> str:
     lessons = DATA_DIR / "LESSONS.md"
     if lessons.exists():
         parts.append("Curated lab lessons (maintained by the lab):\n"
-                     + lessons.read_text()[:8000])
+                     + lessons.read_text(encoding="utf-8", errors="replace")[:8000])
 
     with db.connect() as conn:
         rows = [db.row_to_dict(r) for r in conn.execute(
@@ -401,8 +519,11 @@ def chat(print_id: str, message: str = Form(...), include_photos: bool = Form(Tr
         photos = [dict(r) for r in conn.execute(
             "SELECT filename FROM photos WHERE print_id = ? ORDER BY id", (print_id,))]
 
-    gcode_path = PRINTS_DIR / print_id / p["gcode_filename"]
-    gcode_text = gcode_path.read_text(errors="replace") if gcode_path.exists() else ""
+    gcode_path = print_file(print_id, p["gcode_filename"])
+    # Matches how the file was decoded when the record was created, so the AI
+    # sees the same text the parsed parameters came from.
+    gcode_text = (gcode_path.read_text(encoding="utf-8", errors="replace")
+                  if gcode_path else "")
     ctx = ai.build_print_context(
         p, printer["name"] if printer else "?",
         gcode.context_snippet(gcode_text, p["params"]) if gcode_text else "(no gcode on file)")
@@ -431,39 +552,36 @@ def chat(print_id: str, message: str = Form(...), include_photos: bool = Form(Tr
 
     # Chat transcript also lives in the print folder for dataset portability.
     log = print_dir(print_id) / "chat.md"
-    with log.open("a") as f:
+    with log.open("a", encoding="utf-8") as f:
         f.write(f"\n## user ({db.utcnow()})\n{message}\n\n## assistant\n{reply}\n")
 
     return {"reply": reply}
 
 
-# ---------- phone upload page + QR ----------
-
-def lan_ip() -> str:
-    s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-    try:
-        s.connect(("8.8.8.8", 80))
-        return s.getsockname()[0]
-    except OSError:
-        return "127.0.0.1"
-    finally:
-        s.close()
+@app.get("/api/version")
+def version():
+    """Which build is actually running — the fastest way to tell a stale
+    browser cache from a stale exe."""
+    return {"build": BUILD_ID, "frozen": FROZEN}
 
 
-@app.get("/api/prints/{print_id}/qr")
-def upload_qr(print_id: str):
-    get_print(print_id)
-    url = f"http://{lan_ip()}:{PORT}/p/{print_id}/upload"
-    buf = io.BytesIO()
-    qrcode.make(url).save(buf, format="PNG")
-    return Response(buf.getvalue(), media_type="image/png",
-                    headers={"X-Upload-Url": url})
+# Photos come from the PC itself: "Capture from camera" (any UVC webcam or USB
+# microscope, and a Canon via EOS Webcam Utility) or "Import files" off the
+# card. There is deliberately no phone-upload path — it was the only reason to
+# listen on the LAN, and nothing here is authenticated, so the app now binds to
+# localhost only (see HOST in config.py).
 
 
-@app.get("/p/{print_id}/upload")
-def phone_upload_page(print_id: str):
-    get_print(print_id)
-    return HTMLResponse((STATIC_DIR / "upload.html").read_text())
+class FreshStatic(StaticFiles):
+    """Always revalidate. Without this the browser has no Cache-Control to go
+    on, applies heuristic freshness, and happily keeps serving the previous
+    build's app.js after an update — which looks exactly like the update
+    having failed. The ETag still makes the revalidation a cheap 304."""
+
+    def file_response(self, *args, **kwargs):
+        resp = super().file_response(*args, **kwargs)
+        resp.headers["Cache-Control"] = "no-cache, must-revalidate"
+        return resp
 
 
-app.mount("/", StaticFiles(directory=STATIC_DIR, html=True), name="static")
+app.mount("/", FreshStatic(directory=STATIC_DIR, html=True), name="static")

@@ -14,7 +14,7 @@ if not exist .env (
     exit /b 1
 )
 echo Starting Hyrel Print Assistant on http://localhost:8137
-.venv\Scripts\python -m uvicorn app.main:app --host 0.0.0.0 --port 8137
+.venv\Scripts\python -m uvicorn app.main:app --host 127.0.0.1 --port 8137
 pause
 exit /b 0
 
