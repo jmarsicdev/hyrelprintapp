@@ -409,20 +409,25 @@ function looksLikeMath(s) {
   return /[\\^_]/.test(s) || /[A-Za-z]/.test(s);
 }
 
+// A non-global clone of MATH_RE. This function is re-entrant — onText renders
+// emphasis, which comes back through here — and a shared /g regex has a
+// mutable lastIndex, so a nested call would reset the outer loop and it would
+// never terminate on input as ordinary as "the *flow* is $Q = WHv$". Driving a
+// non-global regex with an explicit offset keeps that state local without
+// recompiling the pattern on every (hot, recursive) call.
+const MATH_RE_LOCAL = new RegExp(MATH_RE.source);
+
 function splitMath(text, onText, onMath) {
-  // A fresh regex per call. This function is re-entrant — onText renders
-  // emphasis, which comes back through here — and a shared /g regex has a
-  // mutable lastIndex, so the inner call would reset the outer loop and it
-  // would never terminate on input as ordinary as "the *flow* is $Q = WHv$".
-  const re = new RegExp(MATH_RE.source, 'g');
-  let last = 0, m;
-  while ((m = re.exec(text)) !== null) {
+  let last = 0, pos = 0, m;
+  while ((m = MATH_RE_LOCAL.exec(text.slice(pos))) !== null) {
+    const index = pos + m.index;
+    pos = index + m[0].length;
     const inline1 = m[4];
     if (inline1 !== undefined && !looksLikeMath(inline1)) continue;
-    if (m.index > last) onText(text.slice(last, m.index));
+    if (index > last) onText(text.slice(last, index));
     const display = m[1] !== undefined || m[2] !== undefined;
     onMath(m[1] ?? m[2] ?? m[3] ?? m[4], display);
-    last = re.lastIndex;
+    last = pos;
   }
   if (last < text.length) onText(text.slice(last));
 }
@@ -1187,16 +1192,21 @@ $('#recordForm').onsubmit = async (e) => {
     // else edited on this print with whatever this page loaded earlier.
     const fd = new FormData();
     let changed = 0;
-    for (const [name, was] of Object.entries(loadedRecord)) {
+    for (const name of RECORD_FIELDS) {
       const el = e.target.elements[name];
       if (!el) continue;
-      if (el.value !== was) { fd.append(name, el.value); changed++; }
+      if (el.value !== (loadedRecord[name] ?? '')) { fd.append(name, el.value); changed++; }
     }
     if (!changed) { status.textContent = 'No changes.'; setTimeout(() => { status.textContent = ''; }, 3000); return; }
     const p = await api(`/api/prints/${currentPrint.id}/record`,
       { method: 'POST', body: fd });
-    loadedRecord = snapshotRecord();
     currentPrint = { ...currentPrint, ...p };
+    const form = e.target;
+    for (const name of RECORD_FIELDS) {
+      const el = form.elements[name];
+      if (el) el.value = currentPrint[name] ?? '';
+    }
+    loadedRecord = snapshotRecord();
     status.textContent = 'Saved.';
   } catch (err) {
     status.textContent = 'Error: ' + err.message;

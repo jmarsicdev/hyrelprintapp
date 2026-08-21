@@ -180,6 +180,10 @@ async def create_print(
     pressure_setting: str = Form(""),
     notes: str = Form(""),
 ):
+    solids_v = finite(solids_loading_pct, "solids_loading_pct")
+    nozzle_v = finite(nozzle_diameter_mm, "nozzle_diameter_mm")
+    spiral_v = finite(spiral_spacing_mm, "spiral_spacing_mm")
+
     src = None
     if source_path:
         src = _resolve_source(source_path)
@@ -208,9 +212,7 @@ async def create_print(
                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (print_id, printer_id, db.utcnow(), operator, filename, sha,
              str(src) if src else "", json.dumps(params), feedstock_batch,
-             finite(solids_loading_pct, "solids_loading_pct"),
-             finite(nozzle_diameter_mm, "nozzle_diameter_mm"),
-             finite(spiral_spacing_mm, "spiral_spacing_mm"),
+             solids_v, nozzle_v, spiral_v,
              print_speed, pressure_setting, notes),
         )
     write_meta(print_id)
