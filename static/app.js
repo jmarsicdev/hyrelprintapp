@@ -21,9 +21,24 @@ function snapshotRecord() {
 
 const $ = (sel) => document.querySelector(sel);
 
+// FastAPI reports failures as {"detail": ...}: a string for our own
+// HTTPExceptions, or an array of field errors for 422 validation failures.
+// Reduce either to one readable line, falling back to the raw body (or the
+// status text) when the response is not the JSON envelope at all.
+async function apiError(r) {
+  const body = await r.text();
+  try {
+    const detail = JSON.parse(body).detail;
+    if (typeof detail === 'string') return detail;
+    if (Array.isArray(detail))
+      return detail.map((d) => d.msg || JSON.stringify(d)).join('; ');
+  } catch { /* not JSON — fall through to the raw body */ }
+  return body || r.statusText;
+}
+
 async function api(path, opts) {
   const r = await fetch(path, opts);
-  if (!r.ok) throw new Error(await r.text());
+  if (!r.ok) throw new Error(await apiError(r));
   return r.json();
 }
 
@@ -207,7 +222,9 @@ function renderPhotos(photos) {
 
 function gcodeBlocks(text) {
   const blocks = [];
-  const re = /```gcode\r?\n([\s\S]*?)```/g;
+  // Match the same fences the render callback acts on: language token is
+  // compared case-insensitively and may carry trailing spaces before the CR.
+  const re = /```[ \t]*gcode[ \t]*\r?\n([\s\S]*?)```/gi;
   let m;
   while ((m = re.exec(text)) !== null) blocks.push(m[1]);
   return blocks;
@@ -433,44 +450,51 @@ function splitMath(text, onText, onMath) {
 }
 
 function mdInline(text, parent) {
+  // Inline code spans are literal: their contents are neither maths nor
+  // emphasis, so they must be pulled out before splitMath — otherwise a `$x$`
+  // written inside backticks would be parsed as maths instead of code.
+  const re = /(`+)([\s\S]*?)\1/g;
+  let last = 0, m;
+  while ((m = re.exec(text)) !== null) {
+    if (m.index > last) mdInlineMath(text.slice(last, m.index), parent);
+    const c = document.createElement('code');
+    c.className = 'md-code-inline';
+    c.textContent = m[2].trim();
+    parent.appendChild(c);
+    last = re.lastIndex;
+  }
+  if (last < text.length) mdInlineMath(text.slice(last), parent);
+}
+
+function mdInlineMath(text, parent) {
   splitMath(text, (chunk) => mdInlineNoMath(chunk, parent),
     (src, display) => parent.appendChild(renderMath(src, display)));
 }
 
-// The model sometimes drops a bare \Delta or \approx into prose rather than
-// into $..$. Map the ones we know to their symbol so the text reads properly;
-// anything unknown is left exactly as written.
-function symbolise(s) {
-  return s.replace(/\\([A-Za-z]+)/g, (whole, name) =>
-    MATH_GREEK[name] || MATH_SYMBOLS[name] || whole);
-}
-
+// Ordinary prose is rendered verbatim: a backslash sequence outside $..$ is
+// literal text (a Windows path like C:\nu_batch must survive intact), so
+// symbol substitution happens only inside math, via renderMath.
 function addText(parent, s) {
-  parent.appendChild(document.createTextNode(symbolise(s)));
+  parent.appendChild(document.createTextNode(s));
 }
 
 function mdInlineNoMath(text, parent) {
-  const re = /(`+)([\s\S]*?)\1|\*\*([\s\S]+?)\*\*|\*([^*\n]+?)\*|~~([\s\S]+?)~~|\[([^\]]+?)\]\(([^)\s]+?)\)/g;
+  const re = /\*\*([\s\S]+?)\*\*|\*([^*\n]+?)\*|~~([\s\S]+?)~~|\[([^\]]+?)\]\(([^)\s]+?)\)/g;
   let last = 0, m;
   while ((m = re.exec(text)) !== null) {
     if (m.index > last) addText(parent, text.slice(last, m.index));
-    if (m[2] !== undefined) {
-      const c = document.createElement('code');
-      c.className = 'md-code-inline';
-      c.textContent = m[2].trim();
-      parent.appendChild(c);
+    if (m[1] !== undefined) {
+      const b = document.createElement('strong'); mdInline(m[1], b); parent.appendChild(b);
+    } else if (m[2] !== undefined) {
+      const i = document.createElement('em'); mdInline(m[2], i); parent.appendChild(i);
     } else if (m[3] !== undefined) {
-      const b = document.createElement('strong'); mdInline(m[3], b); parent.appendChild(b);
+      const s = document.createElement('s'); mdInline(m[3], s); parent.appendChild(s);
     } else if (m[4] !== undefined) {
-      const i = document.createElement('em'); mdInline(m[4], i); parent.appendChild(i);
-    } else if (m[5] !== undefined) {
-      const s = document.createElement('s'); mdInline(m[5], s); parent.appendChild(s);
-    } else if (m[6] !== undefined) {
       // Only ordinary web links become anchors; anything else stays literal.
-      if (/^(https?:|mailto:)/i.test(m[7])) {
+      if (/^(https?:|mailto:)/i.test(m[5])) {
         const a = document.createElement('a');
-        a.href = m[7]; a.target = '_blank'; a.rel = 'noopener noreferrer';
-        a.textContent = m[6];
+        a.href = m[5]; a.target = '_blank'; a.rel = 'noopener noreferrer';
+        a.textContent = m[4];
         parent.appendChild(a);
       } else {
         parent.appendChild(document.createTextNode(m[0]));
@@ -847,9 +871,10 @@ $('#chatForm').onsubmit = async (e) => {
     fd.append('message', text);
     fd.append('include_photos', $('#includePhotos').checked);
     const r = await api(`/api/prints/${currentPrint.id}/chat`, { method: 'POST', body: fd });
+    // The user message and the pending bubble are already in the log; swap the
+    // reply in place rather than re-fetching and re-parsing the whole history.
     wait.replaceWith(renderMessage('assistant', r.reply));
-    const p = await api(`/api/prints/${currentPrint.id}`);
-    renderChat(p.chat);
+    log.scrollTop = log.scrollHeight;
   } catch (err) {
     wait.textContent = 'Error: ' + err.message;
   } finally {
@@ -1160,7 +1185,7 @@ $('#keySave').onclick = async () => {
     $('#keyInput').value = '';
     await refreshKeyStatus();
   } catch (err) {
-    $('#keyResult').textContent = err.message.replace(/^.*"detail":"|"}$/g, '');
+    $('#keyResult').textContent = err.message;
   }
 };
 

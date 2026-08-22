@@ -533,8 +533,8 @@ def chat(print_id: str, message: str = Form(...), include_photos: bool = Form(Tr
     images = []
     if include_photos:
         for ph in photos:
-            path = print_dir(print_id) / "photos" / ph["filename"]
-            if path.exists():
+            path = print_file(print_id, ph["filename"], "photos")
+            if path:
                 images.append((path.read_bytes(), "image/jpeg"))
 
     lab_ctx = build_lab_context(print_id, p.get("tags", "") or "")
